@@ -41,3 +41,7 @@ python-service/*.db
 
 # Python service
 python-service/__pycache__/
+
+# Desktop build outputs
+dist-desktop/
+*.spec

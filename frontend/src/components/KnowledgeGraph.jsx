@@ -31,7 +31,7 @@ export default function KnowledgeGraph({
   const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'vector'
   const [sizeMode, setSizeMode] = useState('count'); // 'count' | 'value'
   const [isPhysicsActive, setIsPhysicsActive] = useState(true);
-  const [showIntelPanel, setShowIntelPanel] = useState(false);
+  const [showIntelPanel, setShowIntelPanel] = useState(true);
 
   // Dragging state
   const draggingNodeRef = useRef(null);
@@ -51,9 +51,9 @@ export default function KnowledgeGraph({
   }, [tableData, columns]);
 
   // Generate Graph Nodes and Edges from dataset schema and data
-  const { nodes, edges, hubStats, topPairs } = useMemo(() => {
+  const { nodes, edges, hubStats, topPairs, relationshipPairs } = useMemo(() => {
     if (!tableData || tableData.length === 0) {
-      return { nodes: [], edges: [], hubStats: [], topPairs: [] };
+      return { nodes: [], edges: [], hubStats: [], topPairs: [], relationshipPairs: [] };
     }
 
     const cols = columns && columns.length > 0 ? columns : Object.keys(tableData[0]);
@@ -63,6 +63,8 @@ export default function KnowledgeGraph({
     const generatedEdges = [];
     const hubs = [];
     const pairs = [];
+    const valueNodeMap = new Map();
+    const categoricalColumns = [];
 
     // 1. Root Node
     const rootNode = {
@@ -121,7 +123,7 @@ export default function KnowledgeGraph({
       };
       generatedNodes.push(colNode);
 
-      hubs.push({ name: col, type: isNum ? 'Numeric' : 'Categorical', connections: tableData.length });
+      if (!isNum) categoricalColumns.push(col);
 
       generatedEdges.push({
         source: 'root',
@@ -139,8 +141,8 @@ export default function KnowledgeGraph({
           if (v != null && v !== '') {
             const key = String(v);
             valCounts[key] = (valCounts[key] || 0) + 1;
-            if (numericMetricCol && typeof r[numericMetricCol] === 'number') {
-              valSums[key] = (valSums[key] || 0) + r[numericMetricCol];
+            if (numericMetricCol && Number.isFinite(Number(r[numericMetricCol]))) {
+              valSums[key] = (valSums[key] || 0) + Number(r[numericMetricCol]);
             }
           }
         });
@@ -154,6 +156,7 @@ export default function KnowledgeGraph({
           const valDistance = distance + 95;
           const valId = `val-${col}-${valName}`;
           const metricSum = valSums[valName] || 0;
+          valueNodeMap.set(`${col}::${valName}`, valId);
 
           // Compute Radius based on sizeMode
           let computedRadius = 10;
@@ -200,10 +203,141 @@ export default function KnowledgeGraph({
           }
         });
       }
+
+      const nonEmpty = tableData.filter((r) => r[col] != null && r[col] !== '').length;
+      const uniqueCount = new Set(tableData.map((r) => r[col]).filter((v) => v != null && v !== '')).size;
+      hubs.push({
+        name: col,
+        type: isNum ? 'Numeric' : 'Categorical',
+        connections: isNum ? uniqueCount : uniqueCount,
+        coverage: `${((nonEmpty / tableData.length) * 100).toFixed(0)}% filled`,
+      });
     });
 
-    return { nodes: generatedNodes, edges: generatedEdges, hubStats: hubs.slice(0, 4), topPairs: pairs.slice(0, 4) };
+    // Add evidence links between values that occur in the same records. These are the
+    // useful relationships that turn the graph from a schema map into an exploration tool.
+    const linkCandidates = [];
+    for (let i = 0; i < categoricalColumns.length; i += 1) {
+      for (let j = i + 1; j < categoricalColumns.length; j += 1) {
+        const colA = categoricalColumns[i];
+        const colB = categoricalColumns[j];
+        const counts = {};
+
+        tableData.forEach((row) => {
+          const valueA = row[colA] == null || row[colA] === '' ? null : String(row[colA]);
+          const valueB = row[colB] == null || row[colB] === '' ? null : String(row[colB]);
+          if (!valueA || !valueB) return;
+          const source = valueNodeMap.get(`${colA}::${valueA}`);
+          const target = valueNodeMap.get(`${colB}::${valueB}`);
+          if (!source || !target) return;
+          const key = `${source}__${target}`;
+          counts[key] = counts[key] || { source, target, colA, colB, valueA, valueB, count: 0 };
+          counts[key].count += 1;
+        });
+
+        linkCandidates.push(...Object.values(counts));
+      }
+    }
+
+    linkCandidates
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 14)
+      .forEach((link) => {
+        generatedEdges.push({
+          source: link.source,
+          target: link.target,
+          weight: 1 + Math.min(2, link.count / Math.max(1, tableData.length) * 8),
+          color: 'rgba(52, 211, 153, 0.55)',
+          relationship: true,
+        });
+      });
+
+    const relationshipPairs = linkCandidates
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((link) => ({
+        ...link,
+        share: `${((link.count / tableData.length) * 100).toFixed(1)}%`,
+      }));
+
+    return {
+      nodes: generatedNodes,
+      edges: generatedEdges,
+      hubStats: hubs.sort((a, b) => b.connections - a.connections).slice(0, 4),
+      topPairs: pairs.sort((a, b) => b.count - a.count).slice(0, 4),
+      relationshipPairs,
+    };
   }, [tableData, datasetInfo, columns, numericMetricCol, sizeMode]);
+
+  // Translate graph structure into findings a user can act on immediately.
+  const graphFindings = useMemo(() => {
+    if (!tableData || tableData.length === 0) return [];
+
+    const cols = columns && columns.length > 0 ? columns : Object.keys(tableData[0]);
+    const categorical = cols.filter((col) => {
+      const sample = tableData.find((row) => row[col] != null && row[col] !== '')?.[col];
+      return sample == null || !Number.isFinite(Number(sample));
+    });
+    const segments = [];
+
+    categorical.forEach((col) => {
+      const groups = {};
+      tableData.forEach((row) => {
+        const raw = row[col];
+        if (raw == null || raw === '') return;
+        const value = String(raw);
+        groups[value] = groups[value] || { value, count: 0, metricTotal: 0 };
+        groups[value].count += 1;
+        if (numericMetricCol && Number.isFinite(Number(row[numericMetricCol]))) {
+          groups[value].metricTotal += Number(row[numericMetricCol]);
+        }
+      });
+      Object.values(groups).forEach((group) => {
+        segments.push({ ...group, column: col, share: group.count / tableData.length });
+      });
+    });
+
+    const findings = [];
+    const dominant = [...segments].sort((a, b) => b.share - a.share)[0];
+    if (dominant) {
+      findings.push({
+        type: 'concentration',
+        label: `${dominant.value} dominates ${dominant.column}`,
+        detail: `${(dominant.share * 100).toFixed(1)}% of records · ${dominant.count.toLocaleString()} rows`,
+        action: `Filter to ${dominant.column} = ${dominant.value}`,
+        filter: dominant,
+        icon: 'sparkle',
+      });
+    }
+
+    if (numericMetricCol) {
+      const leader = [...segments].sort((a, b) => b.metricTotal - a.metricTotal)[0];
+      if (leader && leader.metricTotal > 0) {
+        findings.push({
+          type: 'performance',
+          label: `${leader.value} leads ${leader.column}`,
+          detail: `${numericMetricCol}: ${Math.round(leader.metricTotal).toLocaleString()} across ${leader.count.toLocaleString()} rows`,
+          action: `Ask AI to explain ${leader.value}`,
+          prompt: `Explain why ${leader.value} in ${leader.column} contributes the most ${numericMetricCol}. Compare it with the other segments.`,
+          icon: 'trend',
+        });
+      }
+    }
+
+    const relationship = relationshipPairs?.[0];
+    if (relationship) {
+      findings.push({
+        type: 'relationship',
+        label: `${relationship.valueA} × ${relationship.valueB}`,
+        detail: `${relationship.count.toLocaleString()} matching rows · ${relationship.share} of the dataset`,
+        action: 'Analyze this relationship',
+        prompt: `Analyze the relationship between ${relationship.colA} = '${relationship.valueA}' and ${relationship.colB} = '${relationship.valueB}'. Show the key metrics and how this compares with other combinations.`,
+        icon: 'intersect',
+      });
+    }
+
+    return findings;
+  }, [tableData, columns, numericMetricCol, relationshipPairs]);
 
   // Compute Multi-Node Intersection Stats when two nodes are selected
   const multiNodeIntersection = useMemo(() => {
@@ -338,7 +472,9 @@ export default function KnowledgeGraph({
         ctx.lineTo(tx, ty);
         ctx.strokeStyle = isHighlighted ? 'rgba(219, 53, 82, 0.85)' : edge.color;
         ctx.lineWidth = isHighlighted ? 2.5 : edge.weight;
+        ctx.setLineDash(edge.relationship ? [4, 4] : []);
         ctx.stroke();
+        ctx.setLineDash([]);
 
         // Animated flow particles
         if (isPhysicsActive) {
@@ -565,6 +701,7 @@ export default function KnowledgeGraph({
           >
             <TrendUp size={13} />
             <span>Intel</span>
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-emerald-300">{graphFindings.length}</span>
           </button>
 
           <button
@@ -619,20 +756,64 @@ export default function KnowledgeGraph({
           </div>
 
           <div className="space-y-4 text-xs font-mono">
+            {/* Actionable Findings */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] text-zinc-400 uppercase font-bold">What the graph reveals</p>
+                <span className="text-[9px] text-emerald-400">evidence-based</span>
+              </div>
+              {graphFindings.length > 0 ? graphFindings.map((finding, index) => {
+                const FindingIcon = finding.icon === 'trend' ? TrendUp : finding.icon === 'intersect' ? Intersect : Sparkle;
+                return (
+                  <div key={`${finding.type}-${index}`} className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <FindingIcon size={15} className="text-emerald-400 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-white font-bold leading-snug">{finding.label}</p>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed mt-1">{finding.detail}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      {finding.filter && onFilterTable && (
+                        <button
+                          onClick={() => onFilterTable(finding.filter.column, finding.filter.value)}
+                          className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[9px] text-zinc-200 hover:bg-white/10 cursor-pointer transition-colors"
+                        >
+                          <Table size={11} className="inline mr-1" />
+                          Filter rows
+                        </button>
+                      )}
+                      {finding.prompt && onExecuteQuery && (
+                        <button
+                          onClick={() => onExecuteQuery(finding.prompt)}
+                          className="flex-1 rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[9px] text-white hover:opacity-90 cursor-pointer transition-opacity"
+                        >
+                          <Lightning size={11} className="inline mr-1" />
+                          {finding.action}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              }) : (
+                <p className="text-[10px] text-zinc-500 leading-relaxed">Add more categorical or numeric fields to surface relationships and performance signals.</p>
+              )}
+            </div>
+
             {/* Hub Centrality */}
             <div className="card p-3 bg-white/5 border-white/10 space-y-2">
-              <p className="text-[10px] text-zinc-400 uppercase font-bold">Top Connected Hubs</p>
+              <p className="text-[10px] text-zinc-400 uppercase font-bold">Most informative fields</p>
               {hubStats.map((h, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
                   <span className="text-white font-bold">{h.name}</span>
-                  <span className="text-zinc-400 text-[10px]">{h.connections} rows</span>
+                  <span className="text-zinc-400 text-[10px]">{h.connections} values · {h.coverage}</span>
                 </div>
               ))}
             </div>
 
-            {/* Entity Co-Occurrence Pairs */}
+            {/* Most common values */}
             <div className="card p-3 bg-white/5 border-white/10 space-y-2">
-              <p className="text-[10px] text-zinc-400 uppercase font-bold">Top Value Clusters</p>
+              <p className="text-[10px] text-zinc-400 uppercase font-bold">Most common values</p>
               {topPairs.map((p, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
                   <span className="text-emerald-400 font-bold truncate max-w-[170px]">{p.entity}</span>
@@ -640,6 +821,19 @@ export default function KnowledgeGraph({
                 </div>
               ))}
             </div>
+
+            {/* Cross-column relationships */}
+            {relationshipPairs.length > 0 && (
+              <div className="card p-3 bg-emerald-500/5 border-emerald-500/20 space-y-2">
+                <p className="text-[10px] text-zinc-400 uppercase font-bold">Strongest relationships</p>
+                {relationshipPairs.slice(0, 3).map((pair, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="text-zinc-200 truncate">{pair.valueA} <span className="text-emerald-400">×</span> {pair.valueB}</span>
+                    <span className="text-emerald-400 shrink-0">{pair.share}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

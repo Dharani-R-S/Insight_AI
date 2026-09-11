@@ -172,25 +172,46 @@ Generate the JSON response now:"""
     
     try:
         groq_client = get_client()
-        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-        response = groq_client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a data visualization expert. Output ONLY a valid JSON object "
-                        "with visualization recommendations. No explanation, no markdown, no backticks."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,
-            max_tokens=1200,
-        )
+        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+        try:
+            response = groq_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a data visualization expert. Output ONLY a valid JSON object "
+                            "with visualization recommendations. No explanation, no markdown, no backticks."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=1200,
+            )
+        except Exception as model_err:
+            fallback = "openai/gpt-oss-120b"
+            if model_name != fallback and ("model_not_found" in str(model_err) or "does not exist" in str(model_err)):
+                response = groq_client.chat.completions.create(
+                    model=fallback,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a data visualization expert. Output ONLY a valid JSON object with visualization recommendations. No explanation, no markdown, no backticks."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.3,
+                    max_tokens=1200,
+                )
+            else:
+                raise
         
         response_text = response.choices[0].message.content.strip()
         

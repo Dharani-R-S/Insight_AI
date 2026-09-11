@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,39 +18,24 @@ const PORT = process.env.PORT || 5000;
 const PYTHON_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
 const JWT_SECRET = process.env.JWT_SECRET || 'insightai-secret-key-change-in-production';
 
-// ─── Storage Directory Setup ───
-const dataDir = process.env.APP_DATA_DIR || __dirname;
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-// ─── User Store (Pure JS JSON Database - No Native C++ Mismatch) ───
-const usersFile = path.join(dataDir, 'users.json');
-function loadUsers() {
-  if (!fs.existsSync(usersFile)) {
-    return [];
-  }
-  try {
-    return JSON.parse(fs.readFileSync(usersFile, 'utf-8'));
-  } catch {
-    return [];
-  }
-}
-
-function saveUsers(users) {
-  try {
-    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Failed to save users:', err);
-  }
-}
+// ─── Auth DB Setup ───
+const authDb = new Database(path.join(__dirname, 'auth.db'));
+authDb.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`);
 
 // ─── Middleware ───
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 // Ensure uploads directory exists
-const uploadsDir = path.join(dataDir, 'uploads');
+const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -81,24 +67,17 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    const users = loadUsers();
-    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    const existing = authDb.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (existing) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
-    const newUser = {
-      id: Date.now(),
-      name,
-      email,
-      password_hash,
-      created_at: new Date().toISOString()
-    };
-    users.push(newUser);
-    saveUsers(users);
+    const result = authDb.prepare(
+      'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)'
+    ).run(name, email, password_hash);
 
-    const user = { id: newUser.id, name: newUser.name, email: newUser.email };
+    const user = { id: result.lastInsertRowid, name, email };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
 
     console.log(`✅ New user registered: ${email}`);
@@ -118,8 +97,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const users = loadUsers();
-    const row = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    const row = authDb.prepare('SELECT * FROM users WHERE email = ?').get(email);
     if (!row) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -145,21 +123,31 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
+// ─── Allowed Dataset File Formats ───
+const ALLOWED_EXTENSIONS = new Set([
+  '.csv', '.tsv', '.tab', '.txt',
+  '.xlsx', '.xls', '.xlsm', '.xlsb',
+  '.json', '.jsonl',
+  '.parquet'
+]);
+
 // ─── Multer config ───
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${file.originalname}`;
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const uniqueName = `${Date.now()}-${safeName}`;
     cb(null, uniqueName);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
   fileFilter: (req, file, cb) => {
-    if (path.extname(file.originalname).toLowerCase() !== '.csv') {
-      return cb(new Error('Only CSV files are allowed'));
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return cb(new Error(`Unsupported file type '${ext}'. Supported: CSV, Excel (.xlsx, .xls), JSON, TSV, Parquet.`));
     }
     cb(null, true);
   },
@@ -284,53 +272,51 @@ app.post('/api/datasets/clean', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Extract LLM Configuration Helper ───
-function extractLlmConfig(req) {
-  const bodyConfig = req.body?.llm_config || req.body?.llmConfig || {};
-  const provider = req.headers['x-llm-provider'] || bodyConfig.provider || undefined;
-  const apiKey = req.headers['x-llm-api-key'] || bodyConfig.api_key || bodyConfig.apiKey || undefined;
-  const model = req.headers['x-llm-model'] || bodyConfig.model || undefined;
-  const baseUrl = req.headers['x-llm-base-url'] || bodyConfig.base_url || bodyConfig.baseUrl || undefined;
-
-  return {
-    provider,
-    api_key: apiKey,
-    model,
-    base_url: baseUrl,
-  };
-}
-
-// ─── POST /api/llm/test ───
-app.post('/api/llm/test', async (req, res) => {
+// ─── GET & POST /api/datasets/export (protected) ───
+const handleExportDataset = async (req, res) => {
   try {
-    const config = extractLlmConfig(req);
-    const provider = config.provider || req.body.provider || 'groq';
-    const apiKey = config.api_key || req.body.api_key || req.body.apiKey || '';
-    const model = config.model || req.body.model || '';
-    const baseUrl = config.base_url || req.body.base_url || req.body.baseUrl || '';
+    const currentSession = getUserSession(req.user.id);
+    if (!currentSession.dbPath) {
+      return res.status(400).json({ error: 'No active dataset in session to export.' });
+    }
 
-    const response = await axios.post(`${PYTHON_URL}/llm/test`, {
-      provider,
-      api_key: apiKey,
-      model,
-      base_url: baseUrl,
-    }, { timeout: 35000 });
+    const format = (req.query.format || req.body?.format || 'csv').toLowerCase().trim();
+    const filename = (req.query.filename || req.body?.filename || 'transformed_dataset').trim();
 
-    res.json(response.data);
+    console.log(`📥 Exporting dataset for ${req.user.email} in format: ${format}`);
+
+    const response = await axios.post(`${PYTHON_URL}/export-data`, {
+      db_path: currentSession.dbPath,
+      format,
+      filename,
+    }, {
+      responseType: 'arraybuffer',
+      timeout: 60000,
+    });
+
+    const contentType = response.headers['content-type'] || 'application/octet-stream';
+    const contentDisposition = response.headers['content-disposition'] || `attachment; filename="${filename}.${format}"`;
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', contentDisposition);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    res.send(Buffer.from(response.data));
   } catch (err) {
-    console.error('❌ LLM Test error:', err.response?.data || err.message);
-    res.status(err.response?.status || 400).json({
-      error: err.response?.data?.detail || err.message || 'LLM connection test failed',
+    console.error('❌ Dataset export error:', err.response?.data || err.message);
+    res.status(500).json({
+      error: err.response?.data?.detail || err.message || 'Dataset export failed',
     });
   }
-});
+};
+
+app.get('/api/datasets/export', requireAuth, handleExportDataset);
+app.post('/api/datasets/export', requireAuth, handleExportDataset);
 
 // ─── POST /api/ask (protected) ───
 app.post('/api/ask', requireAuth, async (req, res) => {
   try {
     const { question } = req.body;
     const currentSession = getUserSession(req.user.id);
-    const llmConfig = extractLlmConfig(req);
 
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
@@ -340,14 +326,13 @@ app.post('/api/ask', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
 
-    console.log(`💬 Question from ${req.user.email} (Provider: ${llmConfig.provider || 'default'}): "${question}"`);
+    console.log(`💬 Question from ${req.user.email}: "${question}"`);
 
     const response = await axios.post(`${PYTHON_URL}/analyze`, {
       question,
       db_path: currentSession.dbPath,
       schema: currentSession.schema,
       sample_rows: currentSession.sampleRows,
-      llm_config: llmConfig,
     }, {
       timeout: 60000,
     });
@@ -367,7 +352,6 @@ app.post('/api/ask', requireAuth, async (req, res) => {
 app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
   try {
     const { columns, schema, sample_rows } = req.body;
-    const llmConfig = extractLlmConfig(req);
 
     if (!columns || columns.length === 0) {
       return res.status(400).json({ error: 'Columns information is required' });
@@ -381,7 +365,6 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
         columns,
         schema,
         sample_rows,
-        llm_config: llmConfig,
       }, {
         timeout: 30000,
       });
@@ -403,11 +386,63 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Settings Endpoints (protected) ───
+app.get('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get(`${PYTHON_URL}/settings`, { timeout: 10000 });
+    res.json(response.data);
+  } catch (err) {
+    res.json({
+      provider: 'groq',
+      model: 'openai/gpt-oss-120b',
+      has_key: true,
+      available_models: [
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'qwen/qwen3.8-27b',
+        'qwen/qwen3.6-27b',
+        'groq/compound',
+        'groq/compound-mini'
+      ]
+    });
+  }
+});
+
+app.post('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.post(`${PYTHON_URL}/settings`, req.body, { timeout: 15000 });
+    res.json(response.data);
+  } catch (err) {
+    console.error('Settings update error:', err.message);
+    res.status(500).json({ error: err.response?.data?.detail || err.message || 'Failed to update settings' });
+  }
+});
+
+// ─── Data Transformation Proxies ───
+app.post('/api/transform/join', async (req, res) => {
+  try {
+    const pyRes = await axios.post(`${PYTHON_URL}/api/transform/join`, req.body);
+    res.json(pyRes.data);
+  } catch (err) {
+    console.error('Transform join error:', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
+  }
+});
+
+app.post('/api/transform/apply', async (req, res) => {
+  try {
+    const pyRes = await axios.post(`${PYTHON_URL}/api/transform/apply`, req.body);
+    res.json(pyRes.data);
+  } catch (err) {
+    console.error('Transform apply error:', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
+  }
+});
+
 // ─── POST /api/datasets/auto-visualize (protected) ───
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
   try {
     const currentSession = getUserSession(req.user.id);
-    const llmConfig = extractLlmConfig(req);
     if (!currentSession.dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
@@ -420,7 +455,6 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
         columns: currentSession.columns,
         schema: currentSession.schema,
         sample_rows: currentSession.sampleRows,
-        llm_config: llmConfig,
       }, {
         timeout: 30000,
       });
@@ -519,18 +553,14 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
       res.json(result);
 
     } catch (recErr) {
-      console.warn('⚠️ Recommendation generation warning:', recErr.response?.data || recErr.message);
-      res.json({
-        recommendations: [],
-        summary: { totalRecommendations: 0 },
+      console.error('❌ Recommendation generation error:', recErr.response?.data || recErr.message);
+      res.status(500).json({
         error: recErr.response?.data?.detail || recErr.message || 'Failed to generate recommendations'
       });
     }
   } catch (err) {
     console.error('❌ Auto-visualize error:', err.message);
-    res.json({
-      recommendations: [],
-      summary: { totalRecommendations: 0 },
+    res.status(500).json({
       error: err.message || 'Auto-visualization failed'
     });
   }
@@ -540,7 +570,6 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
 app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
   try {
     const currentSession = getUserSession(req.user.id);
-    const llmConfig = extractLlmConfig(req);
     if (!currentSession.dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
@@ -554,7 +583,6 @@ app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
         schema: currentSession.schema,
         sample_rows: currentSession.sampleRows.slice(0, 500),
         db_path: currentSession.dbPath,
-        llm_config: llmConfig,
       }, {
         timeout: 60000,
       });
@@ -646,43 +674,10 @@ function generateFallbackRecommendations(columns) {
   return recommendations;
 }
 
-// ─── Data Transformation Proxies ───
-app.post('/api/transform/join', async (req, res) => {
-  try {
-    const pyRes = await axios.post(`${PYTHON_URL}/api/transform/join`, req.body);
-    res.json(pyRes.data);
-  } catch (err) {
-    console.error('Transform join error:', err.response?.data || err.message);
-    res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
-  }
-});
-
-app.post('/api/transform/apply', async (req, res) => {
-  try {
-    const pyRes = await axios.post(`${PYTHON_URL}/api/transform/apply`, req.body);
-    res.json(pyRes.data);
-  } catch (err) {
-    console.error('Transform apply error:', err.response?.data || err.message);
-    res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
-  }
-});
-
 // ─── Health Check ───
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', python_service: PYTHON_URL });
 });
-
-// ─── Serve Static Frontend in Production / Desktop ───
-const frontendDist = process.env.FRONTEND_DIST || path.join(__dirname, '../frontend/dist');
-if (fs.existsSync(frontendDist)) {
-  app.use(express.static(frontendDist));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
-      return next();
-    }
-    res.sendFile(path.join(frontendDist, 'index.html'));
-  });
-}
 
 // ─── Error Handler ───
 app.use((err, req, res, next) => {
@@ -697,5 +692,5 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Express server running on http://localhost:${PORT}`);
   console.log(`📡 Python service: ${PYTHON_URL}`);
   console.log(`📁 Uploads directory: ${uploadsDir}`);
-  console.log(`🔐 Auth DB: ${path.join(dataDir, 'auth.db')}\n`);
+  console.log(`🔐 Auth DB: ${path.join(__dirname, 'auth.db')}\n`);
 });

@@ -1,515 +1,450 @@
 import { useState, useEffect } from 'react';
 import { 
   X, 
-  Key, 
+  Cpu, 
+  Sparkle, 
+  Check, 
   CheckCircle, 
   WarningCircle, 
   Eye, 
   EyeSlash, 
-  Cpu, 
-  ArrowSquareOut,
-  Sparkle,
-  CircleNotch,
-  FloppyDisk
+  ArrowClockwise, 
+  Sun, 
+  Moon, 
+  SignOut,
+  Sliders
 } from '@phosphor-icons/react';
 
-export const PROVIDERS = [
-  {
-    id: 'groq',
-    name: 'Groq',
-    badge: 'Fastest & Free Tier',
-    description: 'Ultra-low latency inference with GPT-OSS, Qwen, and Compound models.',
-    defaultBaseUrl: 'https://api.groq.com/openai/v1',
-    defaultModel: 'openai/gpt-oss-120b',
-    models: [
-      { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B (Recommended & Best SQL)' },
-      { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B (Fast & Lightweight)' },
-      { id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 27B' },
-      { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B' },
-      { id: 'groq/compound', name: 'Groq Compound' },
-      { id: 'groq/compound-mini', name: 'Groq Compound Mini' },
-      { id: 'custom', name: '+ Enter Custom Model ID...' },
-    ],
-    getKeyUrl: 'https://console.groq.com/keys',
-    placeholder: 'gsk_...',
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    badge: 'GPT-4o & o3',
-    description: 'World-class accuracy and SQL generation with GPT-4o.',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
-    models: [
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap - Recommended)' },
-      { id: 'gpt-4o', name: 'GPT-4o (High Intelligence)' },
-      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-      { id: 'o3-mini', name: 'o3-mini (Reasoning)' },
-      { id: 'o1-mini', name: 'o1-mini (Reasoning)' },
-      { id: 'custom', name: '+ Enter Custom Model ID...' },
-    ],
-    getKeyUrl: 'https://platform.openai.com/api-keys',
-    placeholder: 'sk-proj-...',
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic Claude',
-    badge: 'Claude 3.5 & 3.7',
-    description: 'Industry-leading code generation and nuanced data reasoning.',
-    defaultBaseUrl: 'https://api.anthropic.com/v1',
-    defaultModel: 'claude-3-5-sonnet-20241022',
-    models: [
-      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Recommended)' },
-      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Ultra Fast)' },
-      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
-      { id: 'custom', name: '+ Enter Custom Model ID...' },
-    ],
-    getKeyUrl: 'https://console.anthropic.com/settings/keys',
-    placeholder: 'sk-ant-api03-...',
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    badge: 'Gemini 2.0 & 1.5',
-    description: 'Multimodal capabilities with massive context windows from Google.',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    defaultModel: 'gemini-1.5-flash',
-    models: [
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Fast - Recommended)' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Next Gen)' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite' },
-      { id: 'custom', name: '+ Enter Custom Model ID...' },
-    ],
-    getKeyUrl: 'https://aistudio.google.com/app/apikey',
-    placeholder: 'AIzaSy...',
-  },
-  {
-    id: 'custom',
-    name: 'Custom / DeepSeek',
-    badge: 'OpenAI Compatible',
-    description: 'Use DeepSeek, OpenRouter, local Ollama, or any compatible endpoint.',
-    defaultBaseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
-    models: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)' },
-      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)' },
-      { id: 'custom', name: '+ Enter Custom Model ID...' },
-    ],
-    getKeyUrl: 'https://platform.deepseek.com/api_keys',
-    placeholder: 'sk-...',
-  },
+const PROVIDER_OPTIONS = [
+  { id: 'groq', name: 'Groq (Ultra-Fast)', icon: '⚡' },
+  { id: 'openai', name: 'OpenAI (Direct)', icon: '🤖' },
+  { id: 'ollama', name: 'Ollama (Local)', icon: '💻' },
 ];
 
-export function getStoredLlmConfig() {
-  try {
-    const raw = localStorage.getItem('insightai_llm_config');
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return {
-    provider: 'groq',
-    model: 'llama-3.3-70b-versatile',
-    apiKey: '',
-    baseUrl: 'https://api.groq.com/openai/v1',
-  };
-}
+const DEFAULT_GROQ_MODELS = [
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'qwen/qwen3.8-27b',
+  'qwen/qwen3.6-27b',
+  'groq/compound',
+  'groq/compound-mini',
+];
 
-export function getStoredProviderKeys() {
-  try {
-    const raw = localStorage.getItem('insightai_provider_keys');
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return {};
-}
-
-export default function SettingsModal({ isOpen, onClose, onSaveConfig }) {
-  const [activeProvider, setActiveProvider] = useState('groq');
+export default function SettingsModal({
+  isOpen,
+  onClose,
+  authFetch,
+  user,
+  onLogout,
+  theme,
+  onToggleTheme,
+  onSettingsSaved
+}) {
+  const [activeTab, setActiveTab] = useState('ai'); // 'ai' | 'preferences' | 'account'
+  const [provider, setProvider] = useState('groq');
+  const [model, setModel] = useState('openai/gpt-oss-120b');
+  const [customModel, setCustomModel] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [selectedModel, setSelectedModel] = useState('llama-3.3-70b-versatile');
-  const [customModelId, setCustomModelId] = useState('');
-  const [baseUrl, setBaseUrl] = useState('https://api.groq.com/openai/v1');
-  const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [hasServerKey, setHasServerKey] = useState(false);
+  const [maskedKey, setMaskedKey] = useState('');
+  const [availableModels, setAvailableModels] = useState(DEFAULT_GROQ_MODELS);
+  
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [testStatus, setTestStatus] = useState(null); // { ok: bool, message: string }
+  const [isTesting, setIsTesting] = useState(false);
 
-  // Load configuration on mount or when opened
+  // Fetch current settings on open
   useEffect(() => {
-    if (isOpen) {
-      const config = getStoredLlmConfig();
-      const keys = getStoredProviderKeys();
-      const prov = config.provider || 'groq';
-      const provDef = PROVIDERS.find(p => p.id === prov) || PROVIDERS[0];
-      
-      setActiveProvider(prov);
-      setApiKey(keys[prov] || config.apiKey || '');
-      
-      const loadedModel = config.model || provDef.defaultModel;
-      const isPredefined = provDef.models.some(m => m.id === loadedModel && m.id !== 'custom');
-      if (isPredefined) {
-        setSelectedModel(loadedModel);
-        setCustomModelId('');
-      } else {
-        setSelectedModel('custom');
-        setCustomModelId(loadedModel);
-      }
-
-      setBaseUrl(config.baseUrl || provDef.defaultBaseUrl || '');
-      setTestResult(null);
-      setSaveSuccess(false);
-    }
+    if (!isOpen) return;
+    setSaveSuccess(false);
+    setTestStatus(null);
+    loadSettings();
   }, [isOpen]);
 
-  // Handle provider switch
-  const handleSelectProvider = (provId) => {
-    // Save current key to in-memory keys
-    const keys = getStoredProviderKeys();
-    keys[activeProvider] = apiKey;
-    localStorage.setItem('insightai_provider_keys', JSON.stringify(keys));
+  const loadSettings = async () => {
+    setIsLoading(true);
+    try {
+      // Check localStorage first
+      const stored = localStorage.getItem('ai_settings');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed.provider) setProvider(parsed.provider);
+          if (parsed.model) setModel(parsed.model);
+        } catch {}
+      }
 
-    setActiveProvider(provId);
-    const provDef = PROVIDERS.find(p => p.id === provId) || PROVIDERS[0];
-    setApiKey(keys[provId] || '');
-    setSelectedModel(provDef.defaultModel);
-    setCustomModelId('');
-    setBaseUrl(provDef.defaultBaseUrl || '');
-    setTestResult(null);
+      if (authFetch) {
+        const res = await authFetch('/api/settings');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.provider) setProvider(data.provider);
+          if (data.model) setModel(data.model);
+          if (data.has_key) setHasServerKey(true);
+          if (data.masked_key) setMaskedKey(data.masked_key);
+          if (data.available_models?.length) {
+            setAvailableModels(data.available_models);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestStatus(null);
+    try {
+      const activeModel = model === 'custom' ? customModel : model;
+      const res = await authFetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: 'Show all data' }),
+      });
+      if (res.ok) {
+        setTestStatus({ ok: true, message: `Connected to ${activeModel} successfully!` });
+      } else {
+        const errData = await res.json();
+        setTestStatus({ ok: false, message: errData.error || 'Connection failed' });
+      }
+    } catch (err) {
+      setTestStatus({ ok: false, message: err.message || 'Connection test failed' });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleSave = async (e) => {
+    if (e) e.preventDefault();
+    setIsSaving(true);
     setSaveSuccess(false);
+
+    const activeModel = model === 'custom' ? customModel.trim() : model;
+
+    try {
+      // Save locally
+      localStorage.setItem('ai_settings', JSON.stringify({
+        provider,
+        model: activeModel,
+      }));
+
+      // Push to backend
+      if (authFetch) {
+        await authFetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            model: activeModel,
+            api_key: apiKey ? apiKey.trim() : undefined,
+          }),
+        });
+      }
+
+      setSaveSuccess(true);
+      if (onSettingsSaved) {
+        onSettingsSaved({ provider, model: activeModel });
+      }
+
+      setTimeout(() => {
+        setSaveSuccess(false);
+        onClose();
+      }, 900);
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+      setTestStatus({ ok: false, message: 'Could not save settings to server.' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (!isOpen) return null;
 
-  const currentProviderDef = PROVIDERS.find(p => p.id === activeProvider) || PROVIDERS[0];
-  const effectiveModel = (selectedModel === 'custom' || customModelId.trim()) 
-    ? (customModelId.trim() || currentProviderDef.defaultModel) 
-    : selectedModel;
-
-  const handleTestConnection = async () => {
-    if (!apiKey.trim()) {
-      setTestResult({ status: 'error', message: 'Please enter an API key first.' });
-      return;
-    }
-
-    setTesting(true);
-    setTestResult(null);
-
-    try {
-      const token = localStorage.getItem('auth_token');
-      const res = await fetch('/api/llm/test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          provider: activeProvider,
-          api_key: apiKey.trim(),
-          model: effectiveModel,
-          base_url: baseUrl.trim(),
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.status === 'success') {
-        setTestResult({
-          status: 'success',
-          message: `Connected successfully to ${currentProviderDef.name}! (Model: ${effectiveModel})`,
-        });
-      } else {
-        setTestResult({
-          status: 'error',
-          message: data.error || 'Connection test failed. Please verify key, base URL, and model.',
-        });
-      }
-    } catch (err) {
-      setTestResult({
-        status: 'error',
-        message: err.message || 'Network error while testing connection.',
-      });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleSave = () => {
-    const config = {
-      provider: activeProvider,
-      apiKey: apiKey.trim(),
-      model: effectiveModel,
-      baseUrl: baseUrl.trim(),
-    };
-
-    // 1. Save active configuration
-    localStorage.setItem('insightai_llm_config', JSON.stringify(config));
-
-    // 2. Save provider keys dictionary
-    const keys = getStoredProviderKeys();
-    keys[activeProvider] = apiKey.trim();
-    localStorage.setItem('insightai_provider_keys', JSON.stringify(keys));
-
-    setSaveSuccess(true);
-    if (onSaveConfig) onSaveConfig(config);
-
-    setTimeout(() => {
-      onClose();
-    }, 600);
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="card w-full max-w-2xl bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+      <div 
+        className="w-full max-w-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg-secondary)]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[var(--color-accent)]/15 border border-[var(--color-accent)]/30 flex items-center justify-center text-[var(--color-accent)]">
-              <Cpu size={20} weight="bold" />
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg-elevated)]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[var(--color-accent)]/10 text-[var(--color-accent)] flex items-center justify-center">
+              <Sliders size={18} />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-[var(--color-text-primary)] font-mono tracking-tight flex items-center gap-2">
-                AI ENGINE & API KEYS
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)] font-semibold">
-                  Saved Locally
-                </span>
-              </h2>
-              <p className="text-xs text-[var(--color-text-secondary)] font-mono">
-                Configure your own LLM provider & models. Keys remain private on your machine.
-              </p>
+              <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Settings</h2>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Configure AI model engine and preferences</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors cursor-pointer"
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] p-1 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer"
           >
-            <X size={18} />
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="flex border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-6">
+          <button
+            onClick={() => setActiveTab('ai')}
+            className={`py-2.5 px-3 text-xs font-medium border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'ai'
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            <Cpu size={14} />
+            <span>AI Engine</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('preferences')}
+            className={`py-2.5 px-3 text-xs font-medium border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'preferences'
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            <Sparkle size={14} />
+            <span>Preferences</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('account')}
+            className={`py-2.5 px-3 text-xs font-medium border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'account'
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            <span>Account</span>
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
-          
-          {/* 1. Provider Selection */}
-          <div>
-            <label className="block text-xs font-mono font-bold text-[var(--color-text-primary)] uppercase tracking-wider mb-2.5">
-              1. Select LLM Provider
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {PROVIDERS.map((prov) => {
-                const isSelected = activeProvider === prov.id;
-                return (
-                  <button
-                    key={prov.id}
-                    type="button"
-                    onClick={() => handleSelectProvider(prov.id)}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
-                      isSelected
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 shadow-sm ring-1 ring-[var(--color-accent)]/40'
-                        : 'border-[var(--color-border)] bg-[var(--color-bg-card)] hover:border-[var(--color-text-muted)]'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold font-mono text-[var(--color-text-primary)]">
-                          {prov.name}
-                        </span>
-                        {isSelected && (
-                          <CheckCircle size={14} weight="fill" className="text-[var(--color-accent)]" />
-                        )}
-                      </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] font-mono block w-fit mb-1 border border-[var(--color-border)]">
-                        {prov.badge}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
-                      {prov.description}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 2. API Key Input */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-mono font-bold text-[var(--color-text-primary)] uppercase tracking-wider flex items-center gap-1.5">
-                <Key size={14} className="text-[var(--color-accent)]" />
-                2. {currentProviderDef.name} API Key
-              </label>
-              <a
-                href={currentProviderDef.getKeyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-[var(--color-accent)] hover:underline inline-flex items-center gap-1 font-mono"
-              >
-                Get API key <ArrowSquareOut size={12} />
-              </a>
-            </div>
-
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => {
-                  setApiKey(e.target.value);
-                  setTestResult(null);
-                  setSaveSuccess(false);
-                }}
-                placeholder={currentProviderDef.placeholder}
-                className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] text-xs font-mono text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none transition-all shadow-inner"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
-                title={showKey ? 'Hide key' : 'Show key'}
-              >
-                {showKey ? <EyeSlash size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
-            <p className="text-[10px] text-[var(--color-text-muted)] font-mono">
-              Key is stored encrypted/locally in browser storage. It is never sent to any external server.
-            </p>
-          </div>
-
-          {/* 3. Model Selection & Custom Model ID Field */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono font-bold text-[var(--color-text-primary)] uppercase tracking-wider block">
-                  3. Select Model
+        <div className="p-6 overflow-y-auto flex-1 space-y-5">
+          {activeTab === 'ai' && (
+            <>
+              {/* Provider Selection */}
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-primary)] mb-2">
+                  AI Provider
                 </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {PROVIDER_OPTIONS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setProvider(p.id)}
+                      className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+                        provider === p.id
+                          ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+                          : 'border-[var(--color-border)] bg-[var(--color-bg-primary)] text-[var(--color-text-muted)] hover:border-[var(--color-border-hover)]'
+                      }`}
+                    >
+                      <div className="text-base mb-1">{p.icon}</div>
+                      <div className="text-xs font-medium leading-tight">{p.name}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Model Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-[var(--color-text-primary)]">
+                    Model Selection
+                  </label>
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                    Active: {model}
+                  </span>
+                </div>
                 <select
-                  value={selectedModel}
+                  value={availableModels.includes(model) ? model : 'custom'}
                   onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    if (e.target.value !== 'custom') {
-                      setCustomModelId('');
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setModel('custom');
+                    } else {
+                      setModel(val);
                     }
                   }}
-                  className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] text-xs font-mono text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none transition-all cursor-pointer"
+                  className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-accent)] outline-none font-mono"
                 >
-                  {currentProviderDef.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m} {m === 'openai/gpt-oss-120b' ? '★ Recommended' : ''}
                     </option>
                   ))}
+                  <option value="custom">Custom Model Name...</option>
                 </select>
+
+                {model === 'custom' && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      placeholder="e.g. openai/gpt-oss-20b or custom model id"
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-accent)] outline-none font-mono"
+                    />
+                  </div>
+                )}
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-1.5">
+                  <span className="text-emerald-500 font-medium">openai/gpt-oss-120b</span> is the default high-performance reasoning model on your Groq key.
+                </p>
               </div>
 
-              {/* Base URL Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono font-bold text-[var(--color-text-primary)] uppercase tracking-wider block">
-                  Provider Base URL
-                </label>
-                <input
-                  type="text"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder={currentProviderDef.defaultBaseUrl}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] text-xs font-mono text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none transition-all"
-                />
+              {/* API Key */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-[var(--color-text-primary)]">
+                    Groq API Key
+                  </label>
+                  {hasServerKey && (
+                    <span className="text-[10px] text-emerald-500 font-medium flex items-center gap-1">
+                      <CheckCircle size={12} weight="fill" /> Key is configured ({maskedKey})
+                    </span>
+                  )}
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    placeholder={hasServerKey ? 'Enter new key to replace existing...' : 'gsk_...'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg pl-3 pr-10 py-2 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-accent)] outline-none font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey((prev) => !prev)}
+                    className="absolute right-3 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"
+                  >
+                    {showApiKey ? <EyeSlash size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                  API keys are stored securely on your local server.
+                </p>
               </div>
-            </div>
 
-            {/* Custom Model ID by User (Available for any new model release) */}
-            <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]/50 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-mono font-bold text-[var(--color-text-primary)] flex items-center gap-1.5">
-                  <Sparkle size={13} className="text-[var(--color-accent)]" />
-                  Custom / New Model ID (Overrides dropdown if entered)
-                </label>
-                <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
-                  Active: <strong className="text-[var(--color-accent)]">{effectiveModel}</strong>
-                </span>
+              {/* Test Connection Button & Result */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={isTesting}
+                  className="btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <ArrowClockwise size={13} className={isTesting ? 'animate-spin' : ''} />
+                  <span>{isTesting ? 'Testing connection...' : 'Test AI Connection'}</span>
+                </button>
+
+                {testStatus && (
+                  <div className={`mt-2 p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
+                    testStatus.ok
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                  }`}>
+                    {testStatus.ok ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight="fill" />}
+                    <span>{testStatus.message}</span>
+                  </div>
+                )}
               </div>
-              <input
-                type="text"
-                value={customModelId}
-                onChange={(e) => {
-                  setCustomModelId(e.target.value);
-                  if (e.target.value.trim()) {
-                    setSelectedModel('custom');
-                  }
-                }}
-                placeholder={`e.g. ${currentProviderDef.defaultModel}, gpt-4.5-preview, claude-3-7-sonnet-20250219, etc.`}
-                className="w-full px-3.5 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] text-xs font-mono text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none transition-all"
-              />
-              <p className="text-[10px] text-[var(--color-text-muted)] font-mono">
-                When new models are released by {currentProviderDef.name}, simply type the exact model ID here to use it immediately.
-              </p>
-            </div>
-          </div>
+            </>
+          )}
 
-          {/* Connection Test Results */}
-          {testResult && (
-            <div
-              className={`p-3 rounded-xl border text-xs font-mono flex items-start gap-2.5 animate-fade-in ${
-                testResult.status === 'success'
-                  ? 'border-[var(--color-success)]/40 bg-[var(--color-success)]/10 text-[var(--color-success)]'
-                  : 'border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-[var(--color-danger)]'
-              }`}
-            >
-              {testResult.status === 'success' ? (
-                <CheckCircle size={17} weight="fill" className="shrink-0 mt-0.5" />
-              ) : (
-                <WarningCircle size={17} weight="fill" className="shrink-0 mt-0.5" />
-              )}
-              <div className="flex-1">
-                <p className="font-bold">{testResult.status === 'success' ? 'Verification Passed' : 'Connection Error'}</p>
-                <p className="text-[11px] opacity-90 break-words mt-0.5">{testResult.message}</p>
+          {activeTab === 'preferences' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                <div>
+                  <h4 className="text-xs font-medium text-[var(--color-text-primary)]">Color Theme</h4>
+                  <p className="text-[10px] text-[var(--color-text-muted)]">Switch between dark and light palette</p>
+                </div>
+                <button
+                  onClick={onToggleTheme}
+                  className="btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                >
+                  {theme === 'dark' ? <Moon size={14} className="text-indigo-400" /> : <Sun size={14} className="text-amber-400" />}
+                  <span className="capitalize">{theme} Mode</span>
+                </button>
+              </div>
+
+              <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                <h4 className="text-xs font-medium text-[var(--color-text-primary)] mb-1">Supported File Types</h4>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                  CSV (.csv), Excel (.xlsx, .xls), JSON (.json, .jsonl), TSV (.tsv, .tab), Parquet (.parquet).
+                </p>
               </div>
             </div>
           )}
 
-          {saveSuccess && (
-            <div className="p-3 rounded-xl border border-[var(--color-success)]/40 bg-[var(--color-success)]/10 text-[var(--color-success)] text-xs font-mono flex items-center gap-2 animate-fade-in">
-              <CheckCircle size={17} weight="fill" />
-              <span>Settings saved! Active Engine: {currentProviderDef.name} ({effectiveModel}).</span>
+          {activeTab === 'account' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+                <p className="text-xs text-[var(--color-text-muted)] mb-1">Signed in as</p>
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{user?.name || 'User'}</h3>
+                <p className="text-xs text-[var(--color-text-muted)] font-mono mt-0.5">{user?.email || 'No email'}</p>
+              </div>
+
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onLogout();
+                  }}
+                  className="w-full btn-secondary text-rose-500 hover:text-rose-400 py-2 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer border-rose-500/20 hover:border-rose-500/40"
+                >
+                  <SignOut size={14} />
+                  <span>Sign Out</span>
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {/* Footer Actions */}
-        <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={handleTestConnection}
-            disabled={testing || !apiKey.trim()}
-            className="px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] hover:border-[var(--color-accent)] text-xs font-mono font-bold text-[var(--color-text-primary)] transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {testing ? (
-              <>
-                <CircleNotch size={14} className="animate-spin text-[var(--color-accent)]" />
-                <span>Testing...</span>
-              </>
-            ) : (
-              <>
-                <Sparkle size={14} className="text-[var(--color-accent)]" />
-                <span>Test Connection</span>
-              </>
-            )}
-          </button>
-
+        {/* Footer */}
+        <div className="px-6 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex items-center justify-between">
+          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+            {saveSuccess ? '✓ Saved successfully' : 'Changes apply immediately'}
+          </span>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-mono font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+              className="btn-secondary px-3.5 py-1.5 text-xs font-medium cursor-pointer"
             >
-              Cancel
+              Close
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="px-5 py-2 rounded-xl bg-[var(--color-accent)] hover:opacity-90 text-white text-xs font-mono font-bold transition-all shadow-md flex items-center gap-2 cursor-pointer"
+              disabled={isSaving}
+              className="btn-primary px-4 py-1.5 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              <FloppyDisk size={14} weight="bold" />
-              <span>Save & Apply</span>
+              {saveSuccess ? (
+                <>
+                  <Check size={14} weight="bold" />
+                  <span>Saved!</span>
+                </>
+              ) : isSaving ? (
+                <>
+                  <ArrowClockwise size={14} className="animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>Save Changes</span>
+              )}
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );

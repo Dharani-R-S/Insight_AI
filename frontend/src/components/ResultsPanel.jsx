@@ -1,24 +1,51 @@
-import { useState } from 'react';
-import DataTable from './DataTable';
+import { useState, useEffect } from 'react';
 import ChartDisplay from './ChartDisplay';
+import DataTable from './DataTable';
 import StatsPanel from './StatsPanel';
 import InsightsPanel from './InsightsPanel';
 import VisualBuilder from './VisualBuilder';
 import KnowledgeGraph from './KnowledgeGraph';
-import { ChartBar, Table, Sliders, Calculator, Lightbulb, Code, Printer, ShareNetwork } from '@phosphor-icons/react';
+import { 
+  ChartBar, 
+  Table, 
+  Lightbulb, 
+  TrendUp, 
+  Code, 
+  Sliders, 
+  ShareNetwork,
+  Printer
+} from '@phosphor-icons/react';
 
 const TABS = [
   { id: 'chart', label: 'Chart', icon: ChartBar },
   { id: 'table', label: 'Table', icon: Table },
-  { id: 'graph', label: 'Graph', icon: ShareNetwork },
   { id: 'explore', label: 'Explore', icon: Sliders },
-  { id: 'stats', label: 'Stats', icon: Calculator },
+  { id: 'graph', label: 'Knowledge Graph', icon: ShareNetwork },
+  { id: 'stats', label: 'Stats', icon: TrendUp },
   { id: 'insights', label: 'Insights', icon: Lightbulb },
   { id: 'sql', label: 'SQL', icon: Code },
 ];
 
-export default function ResultsPanel({ results, columns, fullData }) {
+export default function ResultsPanel({ 
+  results, 
+  columns = [], 
+  fullData = [], 
+  datasetInfo,
+  onExecuteQuery,
+  onFilterTable,
+  onNavigateTab
+}) {
   const [activeTab, setActiveTab] = useState('chart');
+
+  useEffect(() => {
+    if (results) {
+      if (results.chart_base64 || (results.table_result && results.table_result.length > 0)) {
+        setActiveTab('chart');
+      } else if (results.sql_query) {
+        setActiveTab('sql');
+      }
+    }
+  }, [results]);
 
   const hasResults = !!results;
   const { sql_query, table_result, chart_base64, stats, insights, prediction } = results || {};
@@ -41,9 +68,9 @@ export default function ResultsPanel({ results, columns, fullData }) {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mono font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
                   isActive
-                    ? 'bg-[var(--color-accent)] text-white shadow-xs'
+                    ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent)] font-semibold'
                     : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]'
                 }`}
               >
@@ -57,11 +84,11 @@ export default function ResultsPanel({ results, columns, fullData }) {
         {hasResults && (
           <button
             onClick={() => window.print()}
-            className="btn-secondary px-3 py-1 text-xs font-mono font-semibold cursor-pointer flex items-center gap-1.5 no-print shrink-0"
+            className="btn-secondary px-2.5 py-1 text-xs cursor-pointer flex items-center gap-1.5 no-print shrink-0"
             title="Export PDF Report"
           >
             <Printer size={13} />
-            <span>Export Report</span>
+            <span>Export</span>
           </button>
         )}
       </div>
@@ -70,8 +97,8 @@ export default function ResultsPanel({ results, columns, fullData }) {
       <div className="flex-1 overflow-hidden p-4" key={activeTab}>
         {!hasResults && activeTab !== 'explore' ? (
           <div className="flex flex-col items-center justify-center h-full text-center text-[var(--color-text-muted)] space-y-2">
-            <ChartBar size={32} className="opacity-40" />
-            <p className="text-xs font-mono font-medium">Run a query in Ask AI to view dynamic charts and tables</p>
+            <ChartBar size={28} className="opacity-40" />
+            <p className="text-xs font-medium">Run a query in Ask AI to view dynamic charts and tables</p>
           </div>
         ) : (
           <>
@@ -90,11 +117,11 @@ export default function ResultsPanel({ results, columns, fullData }) {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center p-8 text-[var(--color-text-muted)] space-y-2">
-                  <ChartBar size={32} className="opacity-40" />
-                  <p className="text-xs font-mono font-medium">No chart automatically generated for this query.</p>
+                  <ChartBar size={28} className="opacity-40" />
+                  <p className="text-xs font-medium">No chart automatically generated for this query.</p>
                   <button
                     onClick={() => setActiveTab('explore')}
-                    className="btn-secondary px-3 py-1.5 text-xs font-mono font-semibold mt-2 cursor-pointer"
+                    className="btn-secondary px-3 py-1.5 text-xs mt-2 cursor-pointer"
                   >
                     Build Custom Chart in Explore →
                   </button>
@@ -112,7 +139,11 @@ export default function ResultsPanel({ results, columns, fullData }) {
               <div className="h-full">
                 <KnowledgeGraph
                   tableData={table_result?.length ? table_result : fullData}
+                  datasetInfo={datasetInfo}
                   columns={columns}
+                  onExecuteQuery={onExecuteQuery}
+                  onFilterTable={onFilterTable}
+                  onNavigateTab={onNavigateTab}
                 />
               </div>
             )}
@@ -137,23 +168,23 @@ export default function ResultsPanel({ results, columns, fullData }) {
             )}
 
             {activeTab === 'sql' && (
-              <div className="h-full overflow-auto bg-[#161214] text-white rounded-xl border border-white/10 p-5 space-y-3 font-mono">
+              <div className="h-full overflow-auto bg-[var(--color-bg-code)] text-[var(--color-text-primary)] rounded-lg border border-[var(--color-border)] p-4 space-y-3 font-mono">
                 {/* Window Header */}
-                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2.5">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#27c93f]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#ef4444]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#10b981]" />
                   </div>
-                  <span className="text-[10px] text-zinc-400 font-bold">query.sql</span>
+                  <span className="text-[11px] text-[var(--color-text-muted)] font-mono">query.sql</span>
                 </div>
                 <div className="flex items-center justify-between pt-1">
-                  <span className="text-xs font-bold text-[var(--color-accent)] uppercase">EXECUTED SQL QUERY</span>
-                  <span className="text-[10px] text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 rounded font-mono">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">Executed SQL Statement</span>
+                  <span className="text-[11px] text-emerald-400 border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 rounded font-mono">
                     ✓ {table_result?.length ?? 0} rows returned
                   </span>
                 </div>
-                <pre className="text-xs font-mono text-white whitespace-pre-wrap leading-relaxed bg-black/60 rounded-lg p-4 border border-white/10">
+                <pre className="text-xs font-mono text-[var(--color-text-primary)] whitespace-pre-wrap leading-relaxed bg-[var(--color-bg-primary)] rounded-lg p-3.5 border border-[var(--color-border)]">
                   {sql_query}
                 </pre>
               </div>

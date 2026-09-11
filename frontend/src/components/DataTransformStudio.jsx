@@ -6,16 +6,18 @@ import {
   Calculator, 
   Broom, 
   Funnel, 
-  Download, 
+  DownloadSimple, 
   Check, 
-  Trash, 
+  X, 
   ArrowRight,
   Database,
   UploadSimple,
-  Sparkle
+  Sparkle,
+  CaretDown
 } from '@phosphor-icons/react';
+import { downloadTransformedDataset } from '../utils/exportUtils';
 
-function authFetch(url, options = {}) {
+function defaultAuthFetch(url, options = {}) {
   const token = localStorage.getItem('auth_token');
   return fetch(url, {
     ...options,
@@ -29,7 +31,8 @@ function authFetch(url, options = {}) {
 export default function DataTransformStudio({ 
   primaryData, 
   datasetInfo, 
-  onUpdateActiveDataset 
+  onUpdateActiveDataset,
+  authFetch = defaultAuthFetch
 }) {
   const [activeData, setActiveData] = useState(primaryData || []);
   const [activeColumns, setActiveColumns] = useState(() => 
@@ -38,6 +41,8 @@ export default function DataTransformStudio({
   const [secondaryData, setSecondaryData] = useState(null);
   const [secondaryName, setSecondaryName] = useState('');
   const [secondaryColumns, setSecondaryColumns] = useState([]);
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Applied Steps Timeline
   const [appliedSteps, setAppliedSteps] = useState([
@@ -286,53 +291,94 @@ export default function DataTransformStudio({
     }
   };
 
-  // Export CSV
-  const handleExportCSV = () => {
-    if (!activeData || activeData.length === 0) return;
-    const cols = Object.keys(activeData[0]);
-    const lines = [cols.join(',')];
-    activeData.forEach(row => {
-      lines.push(cols.map(c => JSON.stringify(row[c] ?? '')).join(','));
-    });
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `transformed_dataset_${Date.now()}.csv`;
-    a.click();
+  // Export Handlers (CSV, Excel, JSON)
+  const handleExportFormat = async (format) => {
+    setIsExportOpen(false);
+    setIsExporting(true);
+    try {
+      await downloadTransformedDataset({
+        format,
+        authFetch,
+        rows: activeData,
+        baseName: datasetInfo?.table_name || 'transformed_dataset'
+      });
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Failed to export dataset: ' + err.message);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] font-mono select-none">
+    <div className="flex flex-col h-full bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] select-none">
       
       {/* Studio Header Bar */}
-      <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-wrap items-center justify-between gap-4 shrink-0">
+      <div className="px-6 py-3.5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-wrap items-center justify-between gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-2">
             <GitMerge size={18} className="text-[var(--color-accent)]" />
-            <h2 className="text-sm font-mono font-bold tracking-tight">DATA TRANSFORMATION STUDIO</h2>
+            <h2 className="text-sm font-semibold tracking-tight text-[var(--color-text-primary)]">Data Transformation Studio</h2>
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-medium bg-[var(--color-accent)]/10 text-[var(--color-accent)] border border-[var(--color-accent)]/20">
+              Pipeline
+            </span>
           </div>
-          <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-            Power Query Pipeline · {activeData.length.toLocaleString()} rows · {activeColumns.length} columns
+          <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+            {activeData.length.toLocaleString()} rows · {activeColumns.length} columns · {appliedSteps.length} applied steps
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={() => onUpdateActiveDataset(activeData, activeColumns)}
-            className="btn-primary px-4 py-2 text-xs font-mono font-bold flex items-center gap-2 cursor-pointer"
+            className="btn-primary px-3.5 py-1.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-xs"
             title="Set this transformed data as the active workspace dataset"
           >
-            <Check size={14} />
-            <span>Set Active Workspace</span>
+            <Check size={14} weight="bold" />
+            <span>Apply to Workspace</span>
           </button>
-          <button
-            onClick={handleExportCSV}
-            className="btn-secondary px-3.5 py-2 text-xs font-mono font-semibold flex items-center gap-2 cursor-pointer"
-          >
-            <Download size={14} />
-            <span>Export CSV</span>
-          </button>
+
+          {/* Export Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setIsExportOpen(!isExportOpen)}
+              disabled={isExporting || !activeData?.length}
+              className="btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <DownloadSimple size={14} />
+              <span>{isExporting ? 'Exporting...' : 'Export'}</span>
+              <CaretDown size={12} className={`transition-transform ${isExportOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isExportOpen && (
+              <div className="absolute right-0 mt-1.5 w-44 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-xl z-50 py-1 text-xs">
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider border-b border-[var(--color-border)]">
+                  Export Dataset
+                </div>
+                <button
+                  onClick={() => handleExportFormat('csv')}
+                  className="w-full text-left px-3 py-2 text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated)] flex items-center justify-between cursor-pointer"
+                >
+                  <span>CSV File</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono">.csv</span>
+                </button>
+                <button
+                  onClick={() => handleExportFormat('excel')}
+                  className="w-full text-left px-3 py-2 text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated)] flex items-center justify-between cursor-pointer"
+                >
+                  <span>Excel Workbook</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono">.xlsx</span>
+                </button>
+                <button
+                  onClick={() => handleExportFormat('json')}
+                  className="w-full text-left px-3 py-2 text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated)] flex items-center justify-between cursor-pointer"
+                >
+                  <span>JSON Array</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono">.json</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -340,78 +386,101 @@ export default function DataTransformStudio({
       <div className="flex-1 flex overflow-hidden min-h-0">
         
         {/* Left Toolbar Operations Catalog */}
-        <div className="w-56 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 overflow-y-auto space-y-4 shrink-0">
-          <p className="text-[9px] font-mono font-bold uppercase tracking-wider text-[var(--color-text-muted)] px-1">
-            TRANSFORMATIONS
-          </p>
+        <div className="w-60 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 overflow-y-auto space-y-4 shrink-0 font-sans">
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+              Transformations
+            </p>
+            <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">Select a transformation step</p>
+          </div>
 
           <div className="space-y-1.5">
             <button
               onClick={() => setActiveModal('join')}
-              className="w-full card p-2.5 flex items-center gap-2 text-xs font-mono text-[var(--color-text-primary)] hover:border-[var(--color-accent)] cursor-pointer text-left transition-all"
+              className="w-full card p-2.5 flex items-center gap-2.5 text-left hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-all cursor-pointer group"
             >
-              <GitMerge size={16} className="text-[var(--color-accent)] shrink-0" />
-              <div>
-                <p className="font-bold">Multi-Dataset Join</p>
-                <p className="text-[9px] text-[var(--color-text-muted)]">Merge 2 CSV files</p>
+              <div className="w-7 h-7 rounded-lg bg-[var(--color-accent)]/10 text-[var(--color-accent)] flex items-center justify-center shrink-0">
+                <GitMerge size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors">Multi-Dataset Join</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] truncate">Merge 2 CSV datasets</p>
               </div>
             </button>
 
             <button
               onClick={() => setActiveModal('formula')}
-              className="w-full card p-2.5 flex items-center gap-2 text-xs font-mono text-[var(--color-text-primary)] hover:border-[var(--color-accent)] cursor-pointer text-left transition-all"
+              className="w-full card p-2.5 flex items-center gap-2.5 text-left hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-all cursor-pointer group"
             >
-              <Calculator size={16} className="text-purple-400 shrink-0" />
-              <div>
-                <p className="font-bold">Calculated Column</p>
-                <p className="text-[9px] text-[var(--color-text-muted)]">Math formulas & ops</p>
+              <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0">
+                <Calculator size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors">Calculated Column</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] truncate">Math formulas & arithmetic</p>
               </div>
             </button>
 
             <button
               onClick={() => setActiveModal('groupby')}
-              className="w-full card p-2.5 flex items-center gap-2 text-xs font-mono text-[var(--color-text-primary)] hover:border-[var(--color-accent)] cursor-pointer text-left transition-all"
+              className="w-full card p-2.5 flex items-center gap-2.5 text-left hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-all cursor-pointer group"
             >
-              <Database size={16} className="text-blue-400 shrink-0" />
-              <div>
-                <p className="font-bold">Group & Aggregate</p>
-                <p className="text-[9px] text-[var(--color-text-muted)]">Pivot SUM / AVG</p>
+              <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
+                <Database size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors">Group & Aggregate</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] truncate">Pivot SUM, AVG, COUNT</p>
               </div>
             </button>
 
             <button
               onClick={() => setActiveModal('impute')}
-              className="w-full card p-2.5 flex items-center gap-2 text-xs font-mono text-[var(--color-text-primary)] hover:border-[var(--color-accent)] cursor-pointer text-left transition-all"
+              className="w-full card p-2.5 flex items-center gap-2.5 text-left hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-all cursor-pointer group"
             >
-              <Broom size={16} className="text-emerald-400 shrink-0" />
-              <div>
-                <p className="font-bold">Clean & Impute NA</p>
-                <p className="text-[9px] text-[var(--color-text-muted)]">Fill missing values</p>
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+                <Broom size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors">Clean & Impute NA</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] truncate">Fill missing values</p>
               </div>
             </button>
 
             <button
               onClick={() => setActiveModal('filter')}
-              className="w-full card p-2.5 flex items-center gap-2 text-xs font-mono text-[var(--color-text-primary)] hover:border-[var(--color-accent)] cursor-pointer text-left transition-all"
+              className="w-full card p-2.5 flex items-center gap-2.5 text-left hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-all cursor-pointer group"
             >
-              <Funnel size={16} className="text-amber-400 shrink-0" />
-              <div>
-                <p className="font-bold">Filter Rows</p>
-                <p className="text-[9px] text-[var(--color-text-muted)]">Row conditions</p>
+              <div className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
+                <Funnel size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors">Filter Rows</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] truncate">Conditional row filters</p>
               </div>
             </button>
           </div>
 
           {/* Applied Steps Pipeline Bar */}
           <div className="pt-4 border-t border-[var(--color-border)]">
-            <p className="text-[9px] font-mono font-bold uppercase tracking-wider text-[var(--color-text-muted)] px-1 mb-2">
-              APPLIED STEPS ({appliedSteps.length})
-            </p>
+            <div className="px-1 mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                Pipeline Steps
+              </p>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                {appliedSteps.length}
+              </span>
+            </div>
             <div className="space-y-1.5">
               {appliedSteps.map((step, idx) => (
-                <div key={step.id} className="card p-2 bg-[var(--color-bg-card)] border-[var(--color-border)] text-[10px] space-y-0.5">
-                  <p className="font-bold text-[var(--color-text-primary)] truncate">{idx + 1}. {step.name}</p>
-                  <p className="text-[9px] text-[var(--color-text-muted)] truncate">{step.desc}</p>
+                <div key={step.id} className="card p-2.5 bg-[var(--color-bg-card)] border-[var(--color-border)] text-xs space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)] text-[9px] font-mono font-bold flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </span>
+                    <p className="font-medium text-[var(--color-text-primary)] truncate text-[11px]">{step.name}</p>
+                  </div>
+                  <p className="text-[10px] text-[var(--color-text-muted)] truncate pl-5 font-mono">{step.desc}</p>
                 </div>
               ))}
             </div>
@@ -419,13 +488,13 @@ export default function DataTransformStudio({
         </div>
 
         {/* Center Main Preview Table Grid */}
-        <div className="flex-1 p-4 overflow-hidden flex flex-col min-w-0">
+        <div className="flex-1 p-4 overflow-hidden flex flex-col min-w-0 font-sans">
           <div className="flex items-center justify-between mb-3 shrink-0">
-            <h3 className="text-xs font-mono font-bold uppercase text-[var(--color-text-secondary)]">
-              TRANSFORMED DATA PREVIEW
+            <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] tracking-tight">
+              Transformed Data Preview
             </h3>
-            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
-              Live Ready
+            <span className="text-[10px] font-mono text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+              Active Preview
             </span>
           </div>
 
@@ -438,40 +507,44 @@ export default function DataTransformStudio({
 
       {/* ── Transformation Modals ── */}
       {activeModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 font-sans">
           <div className="card p-6 bg-[var(--color-bg-card)] border-[var(--color-border)] w-full max-w-md space-y-5 text-left shadow-2xl">
             
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <h4 className="text-xs font-mono font-bold text-[var(--color-text-primary)] uppercase">
-                {activeModal === 'join' && '🔀 Multi-Dataset Join (Merge)'}
-                {activeModal === 'formula' && '➕ Add Calculated Column'}
-                {activeModal === 'groupby' && '📊 Group By & Aggregate'}
-                {activeModal === 'impute' && '🧹 Impute Missing Values'}
-                {activeModal === 'filter' && '✂️ Filter Rows'}
+              <h4 className="text-xs font-semibold text-[var(--color-text-primary)]">
+                {activeModal === 'join' && 'Multi-Dataset Join (Merge)'}
+                {activeModal === 'formula' && 'Add Calculated Column'}
+                {activeModal === 'groupby' && 'Group By & Aggregate'}
+                {activeModal === 'impute' && 'Impute Missing Values'}
+                {activeModal === 'filter' && 'Filter Rows'}
               </h4>
-              <button onClick={() => setActiveModal(null)} className="text-[var(--color-text-muted)] hover:text-white cursor-pointer">
-                <Trash size={14} />
+              <button 
+                onClick={() => setActiveModal(null)} 
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] p-1 rounded-md hover:bg-[var(--color-bg-elevated)] cursor-pointer transition-colors"
+                aria-label="Close"
+              >
+                <X size={16} />
               </button>
             </div>
 
             {/* Modal 1: Join */}
             {activeModal === 'join' && (
-              <div className="space-y-4 text-xs font-mono">
+              <div className="space-y-4 text-xs font-sans">
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Secondary Dataset (CSV)</label>
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Secondary Dataset (CSV)</label>
                   <input
                     type="file"
                     accept=".csv"
                     onChange={handleSecondaryUpload}
-                    className="w-full text-xs text-zinc-400 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-mono file:bg-[var(--color-accent)] file:text-white cursor-pointer"
+                    className="w-full text-xs text-[var(--color-text-muted)] file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-[var(--color-accent)] file:text-white cursor-pointer"
                   />
-                  {secondaryName && <p className="text-[10px] text-emerald-400 mt-1">Loaded: {secondaryName} ({secondaryData?.length} rows)</p>}
+                  {secondaryName && <p className="text-[11px] text-emerald-500 font-medium mt-1">Loaded: {secondaryName} ({secondaryData?.length} rows)</p>}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Join Type</label>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Join Type</label>
                     <select
                       value={joinType}
                       onChange={e => setJoinType(e.target.value)}
@@ -484,7 +557,7 @@ export default function DataTransformStudio({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Primary Key</label>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Primary Key</label>
                     <select
                       value={joinKey1}
                       onChange={e => setJoinKey1(e.target.value)}
@@ -497,7 +570,7 @@ export default function DataTransformStudio({
 
                 {secondaryColumns.length > 0 && (
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Secondary Key</label>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Secondary Key</label>
                     <select
                       value={joinKey2}
                       onChange={e => setJoinKey2(e.target.value)}
@@ -511,49 +584,49 @@ export default function DataTransformStudio({
                 <button
                   onClick={handleExecuteJoin}
                   disabled={isProcessing || !secondaryData}
-                  className="w-full btn-primary py-2.5 text-xs font-mono font-bold cursor-pointer"
+                  className="w-full btn-primary py-2 text-xs font-semibold cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  {isProcessing ? 'Merging Datasets...' : 'Execute Join →'}
+                  {isProcessing ? 'Merging Datasets...' : 'Execute Join'}
                 </button>
               </div>
             )}
 
             {/* Modal 2: Formula */}
             {activeModal === 'formula' && (
-              <div className="space-y-4 text-xs font-mono">
+              <div className="space-y-4 text-xs font-sans">
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">New Column Name</label>
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">New Column Name</label>
                   <input
                     type="text"
                     placeholder="e.g. total_revenue"
                     value={calcColName}
                     onChange={e => setCalcColName(e.target.value)}
-                    className="input-field w-full"
+                    className="input-field w-full text-xs"
                   />
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 items-center">
                   <div>
-                    <label className="block text-[9px] text-[var(--color-text-muted)] uppercase mb-1">Column 1</label>
-                    <select value={calcCol1} onChange={e => setCalcCol1(e.target.value)} className="input-field w-full">
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Column 1</label>
+                    <select value={calcCol1} onChange={e => setCalcCol1(e.target.value)} className="input-field w-full text-xs">
                       {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-[9px] text-[var(--color-text-muted)] uppercase mb-1">Operator</label>
-                    <select value={calcOp} onChange={e => setCalcOp(e.target.value)} className="input-field w-full text-center">
-                      <option value="*">* (Multiply)</option>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Operator</label>
+                    <select value={calcOp} onChange={e => setCalcOp(e.target.value)} className="input-field w-full text-center text-xs">
+                      <option value="*">× (Multiply)</option>
                       <option value="+">+ (Add)</option>
                       <option value="-">- (Subtract)</option>
-                      <option value="/">/ (Divide)</option>
+                      <option value="/">÷ (Divide)</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-[9px] text-[var(--color-text-muted)] uppercase mb-1">Column 2</label>
-                    <select value={calcCol2} onChange={e => setCalcCol2(e.target.value)} className="input-field w-full">
-                      <option value="">None (Use Scalar)</option>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Column 2</label>
+                    <select value={calcCol2} onChange={e => setCalcCol2(e.target.value)} className="input-field w-full text-xs">
+                      <option value="">None (Use Constant)</option>
                       {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
@@ -561,13 +634,13 @@ export default function DataTransformStudio({
 
                 {!calcCol2 && (
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Scalar Number Value</label>
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Constant Numeric Value</label>
                     <input
                       type="number"
                       placeholder="e.g. 1.05"
                       value={calcScalar}
                       onChange={e => setCalcScalar(e.target.value)}
-                      className="input-field w-full"
+                      className="input-field w-full text-xs"
                     />
                   </div>
                 )}
@@ -575,22 +648,22 @@ export default function DataTransformStudio({
                 <button
                   onClick={handleExecuteCalculatedColumn}
                   disabled={isProcessing || !calcColName}
-                  className="w-full btn-primary py-2.5 text-xs font-mono font-bold cursor-pointer"
+                  className="w-full btn-primary py-2 text-xs font-semibold cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  {isProcessing ? 'Calculating...' : 'Create Calculated Column →'}
+                  {isProcessing ? 'Calculating...' : 'Create Calculated Column'}
                 </button>
               </div>
             )}
 
             {/* Modal 3: Group By */}
             {activeModal === 'groupby' && (
-              <div className="space-y-4 text-xs font-mono">
+              <div className="space-y-4 text-xs font-sans">
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Group By Dimension</label>
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Group By Dimension</label>
                   <select
                     value={groupCols[0] || ''}
                     onChange={e => setGroupCols([e.target.value])}
-                    className="input-field w-full"
+                    className="input-field w-full text-xs"
                   >
                     {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -598,16 +671,16 @@ export default function DataTransformStudio({
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Aggregate Target</label>
-                    <select value={aggCol} onChange={e => setAggCol(e.target.value)} className="input-field w-full">
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Aggregate Target</label>
+                    <select value={aggCol} onChange={e => setAggCol(e.target.value)} className="input-field w-full text-xs">
                       {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Function</label>
-                    <select value={aggFunc} onChange={e => setAggFunc(e.target.value)} className="input-field w-full">
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Function</label>
+                    <select value={aggFunc} onChange={e => setAggFunc(e.target.value)} className="input-field w-full text-xs">
                       <option value="sum">SUM</option>
-                      <option value="mean">AVERAGE</option>
+                      <option value="mean">AVERAGE (Mean)</option>
                       <option value="count">COUNT</option>
                       <option value="min">MIN</option>
                       <option value="max">MAX</option>
@@ -618,25 +691,25 @@ export default function DataTransformStudio({
                 <button
                   onClick={handleExecuteGroupBy}
                   disabled={isProcessing}
-                  className="w-full btn-primary py-2.5 text-xs font-mono font-bold cursor-pointer"
+                  className="w-full btn-primary py-2 text-xs font-semibold cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  {isProcessing ? 'Aggregating...' : 'Execute Group By →'}
+                  {isProcessing ? 'Aggregating...' : 'Execute Group By'}
                 </button>
               </div>
             )}
 
             {/* Modal 4: Impute */}
             {activeModal === 'impute' && (
-              <div className="space-y-4 text-xs font-mono">
+              <div className="space-y-4 text-xs font-sans">
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Target Column</label>
-                  <select value={imputeCol} onChange={e => setImputeCol(e.target.value)} className="input-field w-full">
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Target Column</label>
+                  <select value={imputeCol} onChange={e => setImputeCol(e.target.value)} className="input-field w-full text-xs">
                     {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Fill Strategy</label>
-                  <select value={imputeStrategy} onChange={e => setImputeStrategy(e.target.value)} className="input-field w-full">
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Fill Strategy</label>
+                  <select value={imputeStrategy} onChange={e => setImputeStrategy(e.target.value)} className="input-field w-full text-xs">
                     <option value="zero">Fill with Zero (0)</option>
                     <option value="mean">Fill with Column Mean</option>
                     <option value="median">Fill with Median</option>
@@ -647,26 +720,26 @@ export default function DataTransformStudio({
                 <button
                   onClick={handleExecuteImpute}
                   disabled={isProcessing}
-                  className="w-full btn-primary py-2.5 text-xs font-mono font-bold cursor-pointer"
+                  className="w-full btn-primary py-2 text-xs font-semibold cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  {isProcessing ? 'Cleaning...' : 'Apply Imputation →'}
+                  {isProcessing ? 'Cleaning...' : 'Apply Imputation'}
                 </button>
               </div>
             )}
 
             {/* Modal 5: Filter */}
             {activeModal === 'filter' && (
-              <div className="space-y-4 text-xs font-mono">
+              <div className="space-y-4 text-xs font-sans">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Column</label>
-                    <select value={filterCol} onChange={e => setFilterCol(e.target.value)} className="input-field w-full">
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Column</label>
+                    <select value={filterCol} onChange={e => setFilterCol(e.target.value)} className="input-field w-full text-xs">
                       {activeColumns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Condition</label>
-                    <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="input-field w-full">
+                    <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Condition</label>
+                    <select value={filterOp} onChange={e => setFilterOp(e.target.value)} className="input-field w-full text-xs">
                       <option value="==">Equals (==)</option>
                       <option value="!=">Not Equals (!=)</option>
                       <option value=">">Greater Than (&gt;)</option>
@@ -676,21 +749,21 @@ export default function DataTransformStudio({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[var(--color-text-muted)] uppercase mb-1">Filter Value</label>
+                  <label className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">Filter Value</label>
                   <input
                     type="text"
-                    placeholder="Value..."
+                    placeholder="Value to compare..."
                     value={filterVal}
                     onChange={e => setFilterVal(e.target.value)}
-                    className="input-field w-full"
+                    className="input-field w-full text-xs"
                   />
                 </div>
                 <button
                   onClick={handleExecuteFilter}
                   disabled={isProcessing || filterVal === ''}
-                  className="w-full btn-primary py-2.5 text-xs font-mono font-bold cursor-pointer"
+                  className="w-full btn-primary py-2 text-xs font-semibold cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  {isProcessing ? 'Filtering...' : 'Apply Filter →'}
+                  {isProcessing ? 'Filtering...' : 'Apply Filter'}
                 </button>
               </div>
             )}

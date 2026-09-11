@@ -12,32 +12,20 @@ import InsightsPanel from './components/InsightsPanel';
 import StatsPanel from './components/StatsPanel';
 import DataCleaningModal from './components/DataCleaningModal';
 import KnowledgeGraph from './components/KnowledgeGraph';
+import SettingsModal from './components/SettingsModal';
 import DataTransformStudio from './components/DataTransformStudio';
 import PostUploadTransformModal from './components/PostUploadTransformModal';
-import SettingsModal, { getStoredLlmConfig } from './components/SettingsModal';
-import { Broom, Sparkle, MagnifyingGlass, X } from '@phosphor-icons/react';
+import { Broom, DownloadSimple, CaretDown, Sparkle, MagnifyingGlass, X, List } from '@phosphor-icons/react';
+import { downloadTransformedDataset } from './utils/exportUtils';
 
 function authFetch(url, options = {}) {
   const token = localStorage.getItem('auth_token');
-  let llmConfig = {};
-  try {
-    const raw = localStorage.getItem('insightai_llm_config');
-    if (raw) llmConfig = JSON.parse(raw);
-  } catch {}
-
-  const headers = {
-    ...(options.headers || {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-
-  if (llmConfig.provider) headers['x-llm-provider'] = llmConfig.provider;
-  if (llmConfig.apiKey) headers['x-llm-api-key'] = llmConfig.apiKey;
-  if (llmConfig.model) headers['x-llm-model'] = llmConfig.model;
-  if (llmConfig.baseUrl) headers['x-llm-base-url'] = llmConfig.baseUrl;
-
   return fetch(url, {
     ...options,
-    headers,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
 }
 
@@ -57,11 +45,18 @@ export default function App() {
   const [selectedRecommendation, setSelectedRecommendation] = useState(null);
   const [savedDashboard, setSavedDashboard] = useState(null);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
-  const [cachedRecommendations, setCachedRecommendations] = useState(null);
+  const [isDataExportOpen, setIsDataExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [llmConfig, setLlmConfig] = useState(getStoredLlmConfig);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [llmConfig, setLlmConfig] = useState(() => {
+    try {
+      const stored = localStorage.getItem('ai_settings');
+      return stored ? JSON.parse(stored) : { provider: 'groq', model: 'openai/gpt-oss-120b' };
+    } catch {
+      return { provider: 'groq', model: 'openai/gpt-oss-120b' };
+    }
+  });
 
-  // NL Data Retrieval Filter State
   const [nlFilterInput, setNlFilterInput] = useState('');
   const [nlFilterActive, setNlFilterActive] = useState(null);
   const [nlFilterRows, setNlFilterRows] = useState(null);
@@ -72,7 +67,20 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [showPostUploadModal, setShowPostUploadModal] = useState(false);
   const [fullData, setFullData] = useState(null);
+
+  const handleUpdateActiveDataset = (transformedRows, transformedCols) => {
+    if (!transformedRows || transformedRows.length === 0) return;
+    setFullData(transformedRows);
+    setDatasetInfo((prev) => ({
+      ...prev,
+      columns: transformedCols || (transformedRows[0] ? Object.keys(transformedRows[0]) : prev?.columns || []),
+      row_count: transformedRows.length,
+      sample_rows: transformedRows.slice(0, 100),
+    }));
+    setActivePage('dashboard');
+  };
   const [queryHistory, setQueryHistory] = useState(() => {
     try {
       const raw = localStorage.getItem('query_history');
@@ -136,11 +144,8 @@ export default function App() {
     setDatasetInfo(null); setMessages([]);
     setResults(null); setFullData(null);
     setQueryHistory([]);
-    setCachedRecommendations(null);
     setActivePage('dashboard');
   };
-
-  const [showPostUploadModal, setShowPostUploadModal] = useState(false);
 
   const handleUploadSuccess = async (data) => {
     setDatasetInfo(data);
@@ -149,8 +154,8 @@ export default function App() {
       content: `Dataset loaded — ${data.row_count} rows, ${data.columns?.length} columns. Go to Ask AI to start querying!`,
     }]);
     setResults(null);
-    setCachedRecommendations(null);
     setShowPostUploadModal(true);
+    setActivePage('dashboard');
 
     try {
       const res = await authFetch('/api/ask', {
@@ -163,73 +168,6 @@ export default function App() {
     } catch {
       setFullData(data.sample_rows);
     }
-  };
-
-  const handleUpdateActiveDataset = (transformedRows, transformedCols) => {
-    if (!transformedRows || transformedRows.length === 0) return;
-    setFullData(transformedRows);
-    setDatasetInfo((prev) => ({
-      ...prev,
-      columns: transformedCols,
-      row_count: transformedRows.length,
-      sample_rows: transformedRows.slice(0, 100),
-    }));
-    setCachedRecommendations(null);
-    setActivePage('dashboard');
-    alert(`Success! Updated active workspace dataset to ${transformedRows.length.toLocaleString()} rows and ${transformedCols.length} columns.`);
-  };
-
-  const handleFilterTableFromGraph = async (col, val) => {
-    const query = `show records where ${col} is '${val}'`;
-    setNlFilterInput(query);
-    setActivePage('data');
-    setIsFilteringNL(true);
-    try {
-      const res = await authFetch('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: query }),
-      });
-      const data = await res.json();
-      if (res.ok && data.table_result) {
-        setNlFilterRows(data.table_result);
-        setNlFilterActive(query);
-      }
-    } catch (err) {
-      console.error('Graph filter error:', err);
-    } finally {
-      setIsFilteringNL(false);
-    }
-  };
-
-  const handleNLFilterSubmit = async (e) => {
-    e.preventDefault();
-    if (!nlFilterInput.trim() || isFilteringNL) return;
-    setIsFilteringNL(true);
-    try {
-      const res = await authFetch('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: nlFilterInput.trim() }),
-      });
-      const data = await res.json();
-      if (res.ok && data.table_result) {
-        setNlFilterRows(data.table_result);
-        setNlFilterActive(nlFilterInput.trim());
-      } else {
-        alert(data.error || 'Failed to retrieve data for filter');
-      }
-    } catch (err) {
-      console.error('NL Filter error:', err);
-    } finally {
-      setIsFilteringNL(false);
-    }
-  };
-
-  const handleResetNLFilter = () => {
-    setNlFilterRows(null);
-    setNlFilterActive(null);
-    setNlFilterInput('');
   };
 
   const handleSendMessage = async (question, messageData = {}) => {
@@ -273,6 +211,59 @@ export default function App() {
     setActivePage('visualize');
   };
 
+  const handleFilterTableFromGraph = async (col, val) => {
+    const query = `show records where ${col} is '${val}'`;
+    setNlFilterInput(query);
+    setActivePage('data');
+    setIsFilteringNL(true);
+    try {
+      const res = await authFetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: query }),
+      });
+      const data = await res.json();
+      if (res.ok && data.table_result) {
+        setNlFilterRows(data.table_result);
+        setNlFilterActive(query);
+      }
+    } catch (err) {
+      console.error('Graph filter error:', err);
+    } finally {
+      setIsFilteringNL(false);
+    }
+  };
+
+  const handleNLFilterSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!nlFilterInput.trim() || isFilteringNL) return;
+    setIsFilteringNL(true);
+    try {
+      const res = await authFetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: nlFilterInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.table_result) {
+        setNlFilterRows(data.table_result);
+        setNlFilterActive(nlFilterInput.trim());
+      } else {
+        alert(data.error || 'Failed to retrieve data for filter');
+      }
+    } catch (err) {
+      console.error('NL Filter error:', err);
+    } finally {
+      setIsFilteringNL(false);
+    }
+  };
+
+  const handleResetNLFilter = () => {
+    setNlFilterRows(null);
+    setNlFilterActive(null);
+    setNlFilterInput('');
+  };
+
   const handleOpenSavedVisualization = (saved) => {
     if (!saved) return;
     if (saved.type === 'dashboard') {
@@ -307,6 +298,20 @@ export default function App() {
   // ─── Main App ───
   const { sql_query, table_result, stats, insights, prediction } = results || {};
 
+  const handleDataExport = async (format) => {
+    setIsDataExportOpen(false);
+    try {
+      await downloadTransformedDataset({
+        format,
+        authFetch,
+        rows: nlFilterRows?.length ? nlFilterRows : (table_result?.length ? table_result : (fullData?.length ? fullData : datasetInfo?.sample_rows)),
+        baseName: datasetInfo?.table_name || 'dataset'
+      });
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+  };
+
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard':
@@ -317,8 +322,7 @@ export default function App() {
             onNavigate={setActivePage}
             onCreateVisualization={handleCreateVisualization}
             onOpenSavedVisualization={handleOpenSavedVisualization}
-            recommendations={cachedRecommendations}
-            onRecommendationsFetched={setCachedRecommendations}
+            authFetch={authFetch}
           />
         );
 
@@ -352,7 +356,18 @@ export default function App() {
                 <p className="text-[10px] text-[var(--color-text-muted)]">Charts, tables and insights</p>
               </div>
               <div className="flex-1 min-h-0">
-                <ResultsPanel results={results} columns={datasetInfo?.columns || []} fullData={fullData} />
+                <ResultsPanel
+                  results={results}
+                  columns={datasetInfo?.columns || []}
+                  fullData={fullData}
+                  datasetInfo={datasetInfo}
+                  onExecuteQuery={(query) => {
+                    setActivePage('ask');
+                    handleSendMessage(query, { question: query, mode: 'analyze' });
+                  }}
+                  onFilterTable={handleFilterTableFromGraph}
+                  onNavigateTab={(tab) => setActivePage(tab)}
+                />
               </div>
             </div>
           </div>
@@ -384,25 +399,26 @@ export default function App() {
 
       case 'transform':
         return (
-          <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
             {datasetInfo ? (
               <DataTransformStudio
-                primaryData={fullData}
+                primaryData={fullData || datasetInfo?.sample_rows}
                 datasetInfo={datasetInfo}
                 onUpdateActiveDataset={handleUpdateActiveDataset}
+                authFetch={authFetch}
               />
             ) : (
-              <EmptyPage icon="🔀" title="No dataset" desc="Upload a CSV to open the Data Transformation Studio." />
+              <EmptyPage icon="🔀" title="No dataset" desc="Upload a dataset to open the Data Transformation Studio." />
             )}
           </div>
         );
 
       case 'graph':
         return (
-          <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 p-4 flex">
             {datasetInfo ? (
               <KnowledgeGraph
-                tableData={fullData}
+                tableData={table_result?.length ? table_result : fullData}
                 datasetInfo={datasetInfo}
                 columns={datasetInfo.columns}
                 onExecuteQuery={(query) => {
@@ -413,7 +429,7 @@ export default function App() {
                 onNavigateTab={(tab) => setActivePage(tab)}
               />
             ) : (
-              <EmptyPage icon="🌐" title="No dataset" desc="Upload a CSV to generate the Knowledge Graph." />
+              <EmptyPage icon="🌐" title="No dataset" desc="Upload a dataset to explore the Knowledge Graph." />
             )}
           </div>
         );
@@ -426,7 +442,7 @@ export default function App() {
                 <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Data Browser</h2>
                 <p className="text-[10px] text-[var(--color-text-muted)]">
                   {nlFilterActive
-                    ? `Showing ${nlFilterRows?.length ?? 0} retrieved rows matching "${nlFilterActive}"`
+                    ? `Showing ${nlFilterRows?.length ?? 0} results matching "${nlFilterActive}"`
                     : table_result?.length
                       ? `Showing ${table_result.length} query results`
                       : fullData?.length
@@ -435,36 +451,74 @@ export default function App() {
                 </p>
               </div>
               {datasetInfo && (
-                <button
-                  onClick={() => setIsCleanModalOpen(true)}
-                  className="btn-secondary px-3.5 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1.5"
-                >
-                  <Broom size={14} className="text-[var(--color-accent)]" />
-                  <span>Clean Dataset</span>
-                </button>
+                <div className="flex items-center gap-2 relative">
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsDataExportOpen((prev) => !prev)}
+                      className="btn-secondary px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                      title="Export dataset"
+                    >
+                      <DownloadSimple size={14} className="text-[var(--color-accent)]" />
+                      <span>Export Data</span>
+                      <CaretDown size={11} className="text-[var(--color-text-muted)]" />
+                    </button>
+                    {isDataExportOpen && (
+                      <div className="absolute right-0 mt-1.5 w-44 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-md shadow-xl z-50 py-1 text-xs">
+                        <button
+                          onClick={() => handleDataExport('csv')}
+                          className="w-full text-left px-3 py-2 hover:bg-[var(--color-bg-hover)] flex items-center justify-between text-[var(--color-text-primary)]"
+                        >
+                          <span>CSV (.csv)</span>
+                          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">Plain</span>
+                        </button>
+                        <button
+                          onClick={() => handleDataExport('excel')}
+                          className="w-full text-left px-3 py-2 hover:bg-[var(--color-bg-hover)] flex items-center justify-between text-[var(--color-text-primary)]"
+                        >
+                          <span>Excel (.xlsx)</span>
+                          <span className="text-[10px] text-emerald-500 font-mono font-medium">Sheet</span>
+                        </button>
+                        <button
+                          onClick={() => handleDataExport('json')}
+                          className="w-full text-left px-3 py-2 hover:bg-[var(--color-bg-hover)] flex items-center justify-between text-[var(--color-text-primary)]"
+                        >
+                          <span>JSON (.json)</span>
+                          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">Raw</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setIsCleanModalOpen(true)}
+                    className="btn-secondary px-3.5 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Broom size={14} className="text-[var(--color-accent)]" />
+                    <span>Clean Dataset</span>
+                  </button>
+                </div>
               )}
             </div>
 
-            {/* Natural Language Data Retrieval Bar */}
+            {/* Natural Language Search / Retrieval Bar */}
             {datasetInfo && (
-              <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-card)] flex flex-col md:flex-row items-center gap-3 justify-between">
+              <div className="px-6 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-card)] flex flex-col md:flex-row items-center gap-3 justify-between">
                 <form onSubmit={handleNLFilterSubmit} className="flex-1 flex items-center gap-2 w-full">
-                  <div className="flex-1 flex items-center gap-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-xl px-3 py-1.5 focus-within:border-[var(--color-accent)] transition-all">
+                  <div className="flex-1 flex items-center gap-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-1.5 focus-within:border-[var(--color-accent)] transition-all">
                     <Sparkle size={15} className="text-[var(--color-accent)] shrink-0" />
                     <input
                       type="text"
                       value={nlFilterInput}
                       onChange={(e) => setNlFilterInput(e.target.value)}
-                      placeholder="Retrieve data with AI (e.g. 'show products with price > 100 and region East')..."
-                      className="flex-1 bg-transparent text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] outline-none font-semibold"
+                      placeholder="Search data with natural language (e.g. 'show records where strike > 21500' or 'top 10 by volume')..."
+                      className="flex-1 bg-transparent text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] outline-none font-medium"
                       disabled={isFilteringNL}
                     />
-                    {nlFilterActive && (
+                    {(nlFilterInput || nlFilterActive) && (
                       <button
                         type="button"
                         onClick={handleResetNLFilter}
                         className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] p-0.5 cursor-pointer"
-                        title="Reset filter"
+                        title="Clear filter"
                       >
                         <X size={14} />
                       </button>
@@ -473,21 +527,26 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={!nlFilterInput.trim() || isFilteringNL}
-                    className="btn-primary px-4 py-2 text-xs font-semibold shrink-0 cursor-pointer disabled:opacity-40 flex items-center gap-1.5 shadow-sm"
+                    className="btn-primary px-3.5 py-1.5 text-xs font-semibold shrink-0 cursor-pointer disabled:opacity-40 flex items-center gap-1.5 shadow-sm"
                   >
-                    {isFilteringNL ? <span>Retrieving...</span> : (
+                    {isFilteringNL ? (
+                      <span>Searching...</span>
+                    ) : (
                       <>
                         <MagnifyingGlass size={13} weight="bold" />
-                        <span>Retrieve Data</span>
+                        <span>Search with AI</span>
                       </>
                     )}
                   </button>
                 </form>
 
                 {nlFilterActive && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--color-accent-muted)]/40 border border-[var(--color-accent)]/30 text-xs text-[var(--color-accent)] font-semibold shrink-0">
-                    <span>Active Filter: "{nlFilterActive}" ({nlFilterRows?.length ?? 0} rows)</span>
-                    <button onClick={handleResetNLFilter} className="hover:underline text-[10px] font-bold cursor-pointer ml-1">
+                  <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/25 text-xs text-[var(--color-accent)] font-medium shrink-0">
+                    <span className="truncate max-w-xs">Filter: "{nlFilterActive}" ({nlFilterRows?.length ?? 0} rows)</span>
+                    <button 
+                      onClick={handleResetNLFilter} 
+                      className="text-[10px] font-bold underline hover:text-[var(--color-text-primary)] cursor-pointer ml-1"
+                    >
                       Reset
                     </button>
                   </div>
@@ -497,7 +556,7 @@ export default function App() {
 
             <div className="flex-1 min-h-0 overflow-hidden p-4 flex">
               {(nlFilterRows || table_result?.length || fullData?.length) ? (
-                <DataTable data={nlFilterRows ? nlFilterRows : table_result?.length ? table_result : fullData} />
+                <DataTable data={nlFilterRows ? nlFilterRows : (table_result?.length ? table_result : fullData)} />
               ) : (
                 <EmptyPage icon="📋" title="No data" desc="Upload a CSV or run a query." />
               )}
@@ -586,41 +645,71 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-[var(--color-bg-primary)] overflow-hidden">
-      <Sidebar
-        activePage={activePage}
-        onNavigate={setActivePage}
-        datasetInfo={datasetInfo}
-        user={user}
-        onLogout={handleLogout}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        llmConfig={llmConfig}
-      >
-        <FileUpload
-          onUploadSuccess={handleUploadSuccess}
-          isUploading={isUploading}
-          setIsUploading={setIsUploading}
-          authFetch={authFetch}
+    <div className="flex h-screen bg-[var(--color-bg-primary)] overflow-hidden relative">
+      {/* Mobile Backdrop */}
+      {isMobileMenuOpen && (
+        <div 
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-black/60 z-30 md:hidden backdrop-blur-xs"
         />
-      </Sidebar>
+      )}
+
+      {/* Sidebar Drawer Container (Responsive) */}
+      <div className={`fixed inset-y-0 left-0 z-40 transform transition-transform duration-200 md:static md:translate-x-0 ${
+        isMobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full md:translate-x-0'
+      }`}>
+        <Sidebar
+          activePage={activePage}
+          onNavigate={(page) => {
+            setActivePage(page);
+            setIsMobileMenuOpen(false);
+          }}
+          datasetInfo={datasetInfo}
+          user={user}
+          onLogout={handleLogout}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onOpenSettings={() => {
+            setIsSettingsOpen(true);
+            setIsMobileMenuOpen(false);
+          }}
+          llmConfig={llmConfig}
+        >
+          <FileUpload
+            onUploadSuccess={(data) => {
+              handleUploadSuccess(data);
+              setIsMobileMenuOpen(false);
+            }}
+            isUploading={isUploading}
+            setIsUploading={setIsUploading}
+            authFetch={authFetch}
+          />
+        </Sidebar>
+      </div>
 
       {/* Page content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden w-full">
+        {/* Mobile Header Bar */}
+        <div className="md:hidden flex items-center justify-between px-3.5 py-2.5 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)] shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+              className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] cursor-pointer"
+              aria-label="Toggle navigation menu"
+            >
+              <List size={18} />
+            </button>
+            <span className="text-xs font-semibold text-[var(--color-text-primary)]">InsightAI</span>
+          </div>
+          <span className="text-[11px] text-[var(--color-text-muted)] font-medium capitalize">
+            {activePage === 'transform' ? 'Transformations' : activePage}
+          </span>
+        </div>
+
         {renderPage()}
       </main>
 
-      {/* LLM & API Key Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        onSaveConfig={(newConfig) => {
-          setLlmConfig(newConfig);
-        }}
-      />
-
-      {/* Post-Upload Transformation Prompt Modal */}
+      {/* Post-Upload Transform Modal */}
       {showPostUploadModal && (
         <PostUploadTransformModal
           datasetInfo={datasetInfo}
@@ -634,6 +723,18 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Global Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        authFetch={authFetch}
+        user={user}
+        onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        onSettingsSaved={(cfg) => setLlmConfig(cfg)}
+      />
     </div>
   );
 }

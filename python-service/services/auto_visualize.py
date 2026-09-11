@@ -198,22 +198,43 @@ Return ONLY valid JSON (no markdown, no backticks):
     
     try:
         client = get_groq_client()
-        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Output ONLY valid JSON. No explanation, no markdown."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,
-            max_tokens=800,
-        )
+        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Output ONLY valid JSON. No explanation, no markdown."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=800,
+            )
+        except Exception as model_err:
+            fallback = "openai/gpt-oss-120b"
+            if model_name != fallback and ("model_not_found" in str(model_err) or "does not exist" in str(model_err)):
+                response = client.chat.completions.create(
+                    model=fallback,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "Output ONLY valid JSON. No explanation, no markdown."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.3,
+                    max_tokens=800,
+                )
+            else:
+                raise
         
         response_text = response.choices[0].message.content.strip()
         # Remove markdown if present

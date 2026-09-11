@@ -96,3 +96,76 @@ export async function downloadDashboardAsPdf(title, dashboards) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+export async function downloadTransformedDataset({
+  format = 'csv',
+  authFetch = null,
+  rows = null,
+  baseName = 'transformed_dataset'
+} = {}) {
+  const safeBase = sanitizeFileName(baseName) || 'transformed_dataset';
+  const fmt = format.toLowerCase().trim();
+
+  // Try downloading pristine full dataset from backend first
+  if (authFetch) {
+    try {
+      const res = await authFetch(`/api/datasets/export?format=${fmt}&filename=${safeBase}`);
+      if (res.ok) {
+        const blob = await res.blob();
+        let filename = `${safeBase}.${fmt === 'excel' ? 'xlsx' : fmt}`;
+        const disposition = res.headers.get('content-disposition');
+        if (disposition) {
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          if (match?.[1]) filename = match[1];
+        }
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+        return { success: true, filename };
+      }
+    } catch (err) {
+      console.warn('Backend export failed, attempting client-side fallback:', err);
+    }
+  }
+
+  // Client-side fallback if rows are available
+  if (rows && rows.length > 0) {
+    let blob;
+    let filename = `${safeBase}.${fmt}`;
+
+    if (fmt === 'json') {
+      const jsonStr = JSON.stringify(rows, null, 2);
+      blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+    } else {
+      // CSV format
+      const cols = Object.keys(rows[0]);
+      const csvLines = [
+        cols.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','),
+        ...rows.map(row => 
+          cols.map(col => {
+            const val = row[col];
+            if (val == null) return '';
+            const str = String(val);
+            return `"${str.replace(/"/g, '""')}"`;
+          }).join(',')
+        )
+      ];
+      blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      filename = `${safeBase}.csv`;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    return { success: true, filename };
+  }
+
+  throw new Error('No dataset available to download.');
+}
+

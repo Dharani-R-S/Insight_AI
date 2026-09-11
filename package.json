@@ -21,11 +21,11 @@
     "directories": {
       "output": "dist-desktop"
     },
+    "compression": "normal",
     "asar": false,
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
     "nsis": {

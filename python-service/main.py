@@ -3,31 +3,25 @@ AI Business Intelligence Platform — Python Microservice
 FastAPI application that handles CSV processing, NL→SQL (via Groq),
 query execution, chart generation, statistics, and predictions.
 """
-import sys
-import io
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
 import os
 import re
 import shutil
 import pandas as pd
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+env_file = Path(__file__).resolve().parent / ".env"
+if env_file.exists():
+    load_dotenv(dotenv_path=env_file)
+else:
+    load_dotenv()
 
 # Import services
-from services.database import csv_to_sqlite, execute_query, validate_sql
+from services.database import csv_to_sqlite, load_file_to_sqlite, export_dataset_from_sqlite, execute_query, validate_sql
 from services.llm import nl_to_sql
 from services.charts import generate_chart
 from services.analysis import compute_stats, generate_insights
@@ -56,24 +50,16 @@ app.add_middleware(
 )
 
 # Ensure uploads directory
-UPLOAD_DIR = Path(os.environ.get("APP_DATA_DIR", Path(__file__).parent)) / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR = Path(__file__).parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 # ─── Request Models ───
-class LLMTestRequest(BaseModel):
-    provider: str = "groq"
-    api_key: str = ""
-    model: str = ""
-    base_url: str = ""
-
-
 class AnalyzeRequest(BaseModel):
     question: str
     db_path: str
     schema: dict
     sample_rows: list
-    llm_config: dict = None
 
 
 class RecommendVisualizationsRequest(BaseModel):
@@ -82,7 +68,6 @@ class RecommendVisualizationsRequest(BaseModel):
     sample_rows: list = None  # Frontend format: sample data rows
     db_path: str = None  # Legacy format: database path
     query: str = "SELECT * FROM data"  # Legacy format: optional SQL query
-    llm_config: dict = None
 
 
 class GenerateChartsRequest(BaseModel):
@@ -98,7 +83,6 @@ class AutoDashboardRequest(BaseModel):
     sample_rows: list = None
     db_path: str = None
     query: str = "SELECT * FROM data"
-    llm_config: dict = None
 
 
 class CleanDataRequest(BaseModel):
@@ -107,6 +91,12 @@ class CleanDataRequest(BaseModel):
     fill_text: str = "N/A"
     drop_duplicates: bool = True
     drop_empty_cols: bool = True
+
+
+class ExportDataRequest(BaseModel):
+    db_path: str
+    format: str = "csv"  # "csv", "xlsx", "json"
+    filename: str = "transformed_dataset"
 
 
 # ─── POST /clean-data ───
@@ -196,62 +186,67 @@ async def clean_data(request: CleanDataRequest):
         raise HTTPException(status_code=500, detail=f"Data cleaning failed: {str(e)}")
 
 
+ALLOWED_EXTENSIONS = {'.csv', '.tsv', '.tab', '.txt', '.xlsx', '.xls', '.xlsm', '.xlsb', '.json', '.jsonl', '.parquet'}
+
 # ─── POST /upload ───
 @app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_dataset(file: UploadFile = File(...)):
     """
-    Upload a CSV file and convert it to a SQLite database.
+    Upload a dataset file (CSV, Excel, JSON, TSV, Parquet) and convert it to SQLite.
     Returns schema info and sample rows.
     """
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format '{ext}'. Supported: CSV, Excel (.xlsx, .xls), JSON, TSV, Parquet."
+        )
 
     try:
-        # Save uploaded file
-        file_path = UPLOAD_DIR / f"{int(pd.Timestamp.now().timestamp())}_{file.filename}"
+        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+        file_path = UPLOAD_DIR / f"{int(pd.Timestamp.now().timestamp())}_{safe_filename}"
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
 
-        print(f"📂 CSV saved: {file_path} ({len(content) / 1024:.1f} KB)")
+        print(f"📂 Dataset saved: {file_path} ({len(content) / 1024:.1f} KB, format: {ext})")
 
-        # Convert CSV to SQLite
-        result = csv_to_sqlite(str(file_path))
+        # Convert dataset to SQLite
+        result = load_file_to_sqlite(str(file_path))
         print(f"✅ SQLite created: {result['row_count']} rows, {len(result['columns'])} columns")
 
         return result
 
     except Exception as e:
+        print(f"❌ Upload processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload processing failed: {str(e)}")
 
 
-# ─── POST /llm/test ───
-@app.post("/llm/test")
-async def test_llm_connection(request: LLMTestRequest):
+# ─── POST /export-data ───
+@app.post("/export-data")
+async def export_data(request: ExportDataRequest):
     """
-    Test user LLM API key and model connectivity.
+    Export SQLite table 'data' to CSV, Excel (.xlsx), or JSON.
     """
     try:
-        from services.llm import call_llm
-        test_response = call_llm(
-            prompt="Reply with the exact word 'READY' to confirm the API connection works.",
-            system_prompt="You are a system diagnostic tool. Answer with 'READY'.",
-            llm_config={
-                "provider": request.provider,
-                "api_key": request.api_key,
-                "model": request.model,
-                "base_url": request.base_url,
-            },
-            max_tokens=20,
+        filename, media_type, file_bytes = export_dataset_from_sqlite(
+            request.db_path,
+            export_format=request.format,
+            base_filename=request.filename or "transformed_dataset"
         )
-        return {
-            "status": "success",
-            "message": "Connected successfully!",
-            "provider": request.provider,
-            "response": test_response,
-        }
+        return Response(
+            content=file_bytes,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Dataset database file not found")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"❌ Export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 # ─── POST /analyze ───
@@ -259,7 +254,7 @@ async def test_llm_connection(request: LLMTestRequest):
 async def analyze_data(request: AnalyzeRequest):
     """
     Full analysis pipeline:
-    1. Convert question to SQL via configured LLM provider
+    1. Convert question to SQL via Groq
     2. Execute SQL query
     3. Generate chart
     4. Compute statistics
@@ -270,7 +265,6 @@ async def analyze_data(request: AnalyzeRequest):
     db_path = request.db_path
     schema = request.schema
     sample_rows = request.sample_rows
-    llm_config = request.llm_config
 
     result = {
         "sql_query": "",
@@ -282,9 +276,9 @@ async def analyze_data(request: AnalyzeRequest):
     }
 
     try:
-        # Step 1: NL → SQL via LLM
-        print(f"🧠 Converting to SQL: \"{question}\" (Provider: {llm_config.get('provider') if llm_config else 'env/groq'})")
-        sql_query = nl_to_sql(question, schema, sample_rows, llm_config=llm_config)
+        # Step 1: NL → SQL via Groq
+        print(f"🧠 Converting to SQL: \"{question}\"")
+        sql_query = nl_to_sql(question, schema, sample_rows)
         result["sql_query"] = sql_query
         print(f"📝 SQL: {sql_query}")
 
@@ -368,8 +362,8 @@ async def recommend_visualizations_endpoint(request: RecommendVisualizationsRequ
             df = pd.DataFrame(request.sample_rows)
             
             # Use new hybrid analyzer (rules + LLM)
-            analyzer = FeatureAnalyzer(llm_config=request.llm_config)
-            result = analyzer.analyze_dataset(df, max_recommendations=5, llm_config=request.llm_config)
+            analyzer = FeatureAnalyzer()
+            result = analyzer.analyze_dataset(df, max_recommendations=5)
             
             return {
                 "recommendations": result.get("recommendations", []),
@@ -478,7 +472,7 @@ async def auto_dashboard(request: AutoDashboardRequest):
             }
         
         # Use FeatureAnalyzer to generate intelligent dashboard
-        analyzer = FeatureAnalyzer(llm_config=request.llm_config)
+        analyzer = FeatureAnalyzer()
         charts = analyzer.generate_dashboard(df)
         
         print(f"   ✅ Generated {len(charts)} dashboard charts")
@@ -504,6 +498,78 @@ async def auto_dashboard(request: AutoDashboardRequest):
         }
 
 
+# ─── Settings Endpoints ───
+class SettingsUpdateRequest(BaseModel):
+    provider: str = "groq"
+    model: str = "openai/gpt-oss-120b"
+    api_key: str = None
+
+
+@app.get("/settings")
+async def get_settings():
+    api_key = os.getenv("GROQ_API_KEY", "")
+    current_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    available_models = [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-27b",
+        "groq/compound",
+        "groq/compound-mini",
+    ]
+
+    if api_key and api_key != "your-groq-api-key-here":
+        try:
+            from groq import Groq
+            g_client = Groq(api_key=api_key)
+            models_list = g_client.models.list()
+            chat_models = [m.id for m in models_list.data if not m.id.startswith("whisper")]
+            if chat_models:
+                available_models = chat_models
+        except Exception:
+            pass
+
+    return {
+        "provider": "groq",
+        "model": current_model,
+        "has_key": bool(api_key and api_key != "your-groq-api-key-here"),
+        "masked_key": f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else ("Configured" if api_key else ""),
+        "available_models": available_models,
+    }
+
+
+@app.post("/settings")
+async def update_settings(req: SettingsUpdateRequest):
+    if req.model:
+        os.environ["GROQ_MODEL"] = req.model.strip()
+    if req.api_key and req.api_key.strip():
+        os.environ["GROQ_API_KEY"] = req.api_key.strip()
+        try:
+            import services.llm as llm_svc
+            llm_svc.client = None
+            import services.auto_visualize as auto_vis_svc
+            auto_vis_svc._groq_client = None
+            import services.recommendations as rec_svc
+            rec_svc.client = None
+        except Exception:
+            pass
+
+    # Persist to python-service/.env
+    try:
+        env_file = Path(__file__).resolve().parent / ".env"
+        current_content = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+        lines = [l for l in current_content.splitlines() if not l.startswith("GROQ_API_KEY=") and not l.startswith("GROQ_MODEL=")]
+        key_val = os.getenv("GROQ_API_KEY", "")
+        model_val = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        lines.append(f"GROQ_API_KEY={key_val}")
+        lines.append(f"GROQ_MODEL={model_val}")
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as e:
+        print(f"⚠️ Could not save to .env: {e}")
+
+    return await get_settings()
+
+
 # ─── Transformation Endpoints ───
 class JoinRequest(BaseModel):
     dataset1_rows: list
@@ -512,10 +578,12 @@ class JoinRequest(BaseModel):
     key1: str
     key2: str
 
+
 class TransformRequest(BaseModel):
     table_rows: list
     action: str
     params: dict
+
 
 @app.post("/api/transform/join")
 async def api_transform_join(request: JoinRequest):
@@ -529,6 +597,7 @@ async def api_transform_join(request: JoinRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.post("/api/transform/apply")
 async def api_transform_apply(request: TransformRequest):
     try:
@@ -540,6 +609,7 @@ async def api_transform_apply(request: TransformRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 # ─── Health Check ───
 @app.get("/health")
 async def health():
@@ -547,15 +617,10 @@ async def health():
         "status": "ok",
         "service": "InsightAI Python Service",
         "groq_configured": bool(os.getenv("GROQ_API_KEY") and os.getenv("GROQ_API_KEY") != "your-groq-api-key-here"),
+        "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PYTHON_PORT", os.environ.get("PORT", 8000)))
-    if getattr(sys, "frozen", False):
-        import multiprocessing
-        multiprocessing.freeze_support()
-        uvicorn.run(app, host="127.0.0.1", port=port)
-    else:
-        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
