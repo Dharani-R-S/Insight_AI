@@ -7,3 +7,4 @@ groq
 python-multipart
 kaleido
 python-dotenv
+pyinstaller>=6.0.0

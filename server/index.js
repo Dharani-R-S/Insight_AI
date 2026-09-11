@@ -7,7 +7,6 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,17 +23,26 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// ─── Auth DB Setup ───
-const authDb = new Database(path.join(dataDir, 'auth.db'));
-authDb.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  )
-`);
+// ─── User Store (Pure JS JSON Database - No Native C++ Mismatch) ───
+const usersFile = path.join(dataDir, 'users.json');
+function loadUsers() {
+  if (!fs.existsSync(usersFile)) {
+    return [];
+  }
+  try {
+    return JSON.parse(fs.readFileSync(usersFile, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveUsers(users) {
+  try {
+    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save users:', err);
+  }
+}
 
 // ─── Middleware ───
 app.use(cors());
@@ -73,17 +81,24 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    const existing = authDb.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const users = loadUsers();
+    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (existing) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
-    const result = authDb.prepare(
-      'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)'
-    ).run(name, email, password_hash);
+    const newUser = {
+      id: Date.now(),
+      name,
+      email,
+      password_hash,
+      created_at: new Date().toISOString()
+    };
+    users.push(newUser);
+    saveUsers(users);
 
-    const user = { id: result.lastInsertRowid, name, email };
+    const user = { id: newUser.id, name: newUser.name, email: newUser.email };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
 
     console.log(`✅ New user registered: ${email}`);
@@ -103,7 +118,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const row = authDb.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const users = loadUsers();
+    const row = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (!row) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -268,11 +284,53 @@ app.post('/api/datasets/clean', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Extract LLM Configuration Helper ───
+function extractLlmConfig(req) {
+  const bodyConfig = req.body?.llm_config || req.body?.llmConfig || {};
+  const provider = req.headers['x-llm-provider'] || bodyConfig.provider || undefined;
+  const apiKey = req.headers['x-llm-api-key'] || bodyConfig.api_key || bodyConfig.apiKey || undefined;
+  const model = req.headers['x-llm-model'] || bodyConfig.model || undefined;
+  const baseUrl = req.headers['x-llm-base-url'] || bodyConfig.base_url || bodyConfig.baseUrl || undefined;
+
+  return {
+    provider,
+    api_key: apiKey,
+    model,
+    base_url: baseUrl,
+  };
+}
+
+// ─── POST /api/llm/test ───
+app.post('/api/llm/test', async (req, res) => {
+  try {
+    const config = extractLlmConfig(req);
+    const provider = config.provider || req.body.provider || 'groq';
+    const apiKey = config.api_key || req.body.api_key || req.body.apiKey || '';
+    const model = config.model || req.body.model || '';
+    const baseUrl = config.base_url || req.body.base_url || req.body.baseUrl || '';
+
+    const response = await axios.post(`${PYTHON_URL}/llm/test`, {
+      provider,
+      api_key: apiKey,
+      model,
+      base_url: baseUrl,
+    }, { timeout: 35000 });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ LLM Test error:', err.response?.data || err.message);
+    res.status(err.response?.status || 400).json({
+      error: err.response?.data?.detail || err.message || 'LLM connection test failed',
+    });
+  }
+});
+
 // ─── POST /api/ask (protected) ───
 app.post('/api/ask', requireAuth, async (req, res) => {
   try {
     const { question } = req.body;
     const currentSession = getUserSession(req.user.id);
+    const llmConfig = extractLlmConfig(req);
 
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
@@ -282,13 +340,14 @@ app.post('/api/ask', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
 
-    console.log(`💬 Question from ${req.user.email}: "${question}"`);
+    console.log(`💬 Question from ${req.user.email} (Provider: ${llmConfig.provider || 'default'}): "${question}"`);
 
     const response = await axios.post(`${PYTHON_URL}/analyze`, {
       question,
       db_path: currentSession.dbPath,
       schema: currentSession.schema,
       sample_rows: currentSession.sampleRows,
+      llm_config: llmConfig,
     }, {
       timeout: 60000,
     });
@@ -308,6 +367,7 @@ app.post('/api/ask', requireAuth, async (req, res) => {
 app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
   try {
     const { columns, schema, sample_rows } = req.body;
+    const llmConfig = extractLlmConfig(req);
 
     if (!columns || columns.length === 0) {
       return res.status(400).json({ error: 'Columns information is required' });
@@ -321,6 +381,7 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
         columns,
         schema,
         sample_rows,
+        llm_config: llmConfig,
       }, {
         timeout: 30000,
       });
@@ -346,6 +407,7 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
   try {
     const currentSession = getUserSession(req.user.id);
+    const llmConfig = extractLlmConfig(req);
     if (!currentSession.dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
@@ -358,6 +420,7 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
         columns: currentSession.columns,
         schema: currentSession.schema,
         sample_rows: currentSession.sampleRows,
+        llm_config: llmConfig,
       }, {
         timeout: 30000,
       });
@@ -477,6 +540,7 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
 app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
   try {
     const currentSession = getUserSession(req.user.id);
+    const llmConfig = extractLlmConfig(req);
     if (!currentSession.dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
@@ -490,6 +554,7 @@ app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
         schema: currentSession.schema,
         sample_rows: currentSession.sampleRows.slice(0, 500),
         db_path: currentSession.dbPath,
+        llm_config: llmConfig,
       }, {
         timeout: 60000,
       });

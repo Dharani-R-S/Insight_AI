@@ -61,11 +61,19 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Request Models ───
+class LLMTestRequest(BaseModel):
+    provider: str = "groq"
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+
+
 class AnalyzeRequest(BaseModel):
     question: str
     db_path: str
     schema: dict
     sample_rows: list
+    llm_config: dict = None
 
 
 class RecommendVisualizationsRequest(BaseModel):
@@ -74,6 +82,7 @@ class RecommendVisualizationsRequest(BaseModel):
     sample_rows: list = None  # Frontend format: sample data rows
     db_path: str = None  # Legacy format: database path
     query: str = "SELECT * FROM data"  # Legacy format: optional SQL query
+    llm_config: dict = None
 
 
 class GenerateChartsRequest(BaseModel):
@@ -89,6 +98,7 @@ class AutoDashboardRequest(BaseModel):
     sample_rows: list = None
     db_path: str = None
     query: str = "SELECT * FROM data"
+    llm_config: dict = None
 
 
 class CleanDataRequest(BaseModel):
@@ -215,12 +225,41 @@ async def upload_csv(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Upload processing failed: {str(e)}")
 
 
+# ─── POST /llm/test ───
+@app.post("/llm/test")
+async def test_llm_connection(request: LLMTestRequest):
+    """
+    Test user LLM API key and model connectivity.
+    """
+    try:
+        from services.llm import call_llm
+        test_response = call_llm(
+            prompt="Reply with the exact word 'READY' to confirm the API connection works.",
+            system_prompt="You are a system diagnostic tool. Answer with 'READY'.",
+            llm_config={
+                "provider": request.provider,
+                "api_key": request.api_key,
+                "model": request.model,
+                "base_url": request.base_url,
+            },
+            max_tokens=20,
+        )
+        return {
+            "status": "success",
+            "message": "Connected successfully!",
+            "provider": request.provider,
+            "response": test_response,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ─── POST /analyze ───
 @app.post("/analyze")
 async def analyze_data(request: AnalyzeRequest):
     """
     Full analysis pipeline:
-    1. Convert question to SQL via Groq
+    1. Convert question to SQL via configured LLM provider
     2. Execute SQL query
     3. Generate chart
     4. Compute statistics
@@ -231,6 +270,7 @@ async def analyze_data(request: AnalyzeRequest):
     db_path = request.db_path
     schema = request.schema
     sample_rows = request.sample_rows
+    llm_config = request.llm_config
 
     result = {
         "sql_query": "",
@@ -242,9 +282,9 @@ async def analyze_data(request: AnalyzeRequest):
     }
 
     try:
-        # Step 1: NL → SQL via Groq
-        print(f"🧠 Converting to SQL: \"{question}\"")
-        sql_query = nl_to_sql(question, schema, sample_rows)
+        # Step 1: NL → SQL via LLM
+        print(f"🧠 Converting to SQL: \"{question}\" (Provider: {llm_config.get('provider') if llm_config else 'env/groq'})")
+        sql_query = nl_to_sql(question, schema, sample_rows, llm_config=llm_config)
         result["sql_query"] = sql_query
         print(f"📝 SQL: {sql_query}")
 
@@ -328,8 +368,8 @@ async def recommend_visualizations_endpoint(request: RecommendVisualizationsRequ
             df = pd.DataFrame(request.sample_rows)
             
             # Use new hybrid analyzer (rules + LLM)
-            analyzer = FeatureAnalyzer()
-            result = analyzer.analyze_dataset(df, max_recommendations=5)
+            analyzer = FeatureAnalyzer(llm_config=request.llm_config)
+            result = analyzer.analyze_dataset(df, max_recommendations=5, llm_config=request.llm_config)
             
             return {
                 "recommendations": result.get("recommendations", []),
@@ -438,7 +478,7 @@ async def auto_dashboard(request: AutoDashboardRequest):
             }
         
         # Use FeatureAnalyzer to generate intelligent dashboard
-        analyzer = FeatureAnalyzer()
+        analyzer = FeatureAnalyzer(llm_config=request.llm_config)
         charts = analyzer.generate_dashboard(df)
         
         print(f"   ✅ Generated {len(charts)} dashboard charts")
@@ -511,7 +551,6 @@ async def health():
 
 
 if __name__ == "__main__":
-    import sys
     import uvicorn
     port = int(os.environ.get("PYTHON_PORT", os.environ.get("PORT", 8000)))
     if getattr(sys, "frozen", False):

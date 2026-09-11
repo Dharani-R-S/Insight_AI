@@ -4,62 +4,36 @@ Analyzes dataset to suggest appropriate charts based on data characteristics
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 import os
-from groq import Groq
+from services.llm import call_llm, resolve_llm_config
 
 
 class FeatureAnalyzer:
     """Analyze dataset features for visualization recommendations"""
     
-    def __init__(self):
-        self.groq_client = None
-        self.initialize_groq()
+    def __init__(self, llm_config: Optional[Dict[str, Any]] = None):
+        self.llm_config = llm_config
     
-    def initialize_groq(self):
-        """Initialize Groq client"""
-        api_key = os.getenv("GROQ_API_KEY")
-        if api_key and api_key != "your-groq-api-key-here":
-            self.groq_client = Groq(api_key=api_key)
-    
-    def analyze_dataset(self, df: pd.DataFrame, max_recommendations: int = 5) -> Dict[str, Any]:
+    def analyze_dataset(self, df: pd.DataFrame, max_recommendations: int = 5, llm_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Analyze dataset and provide visualization recommendations using hybrid approach.
-        
-        Args:
-            df: DataFrame to analyze
-            max_recommendations: Maximum number of recommendations to return
-        
-        Returns:
-            {
-                'recommendations': [
-                    {
-                        'type': 'bar',
-                        'title': 'Sales by Region',
-                        'description': '...',
-                        'x_axis': 'region',
-                        'y_axis': 'sales',
-                        'rationale': '...',
-                        'confidence': 0.85,
-                        'features': ['region', 'sales']
-                    },
-                    ...
-                ]
-            }
         """
         if df.empty:
             return {'recommendations': [], 'error': 'Empty dataset'}
         
+        active_config = llm_config or self.llm_config
         try:
             # Step 1: Rule-based analysis
             rule_recommendations = self._rule_based_recommendations(df)
             
-            # Step 2: LLM enhancement (if Groq is available)
-            if self.groq_client:
+            # Step 2: LLM enhancement
+            try:
                 enhanced_recommendations = self._llm_enhance_recommendations(
-                    df, rule_recommendations
+                    df, rule_recommendations, active_config
                 )
-            else:
+            except Exception as llm_err:
+                print(f"⚠️ LLM enhancement skipped: {llm_err}")
                 enhanced_recommendations = rule_recommendations
             
             # Step 3: Limit to max recommendations
@@ -171,9 +145,10 @@ class FeatureAnalyzer:
         return recommendations
     
     def _llm_enhance_recommendations(self, df: pd.DataFrame, 
-                                   rule_recs: List[Dict]) -> List[Dict]:
-        """Enhance rule-based recommendations using Groq LLM"""
-        if not self.groq_client or not rule_recs:
+                                   rule_recs: List[Dict],
+                                   llm_config: Optional[Dict[str, Any]] = None) -> List[Dict]:
+        """Enhance rule-based recommendations using configured LLM provider"""
+        if not rule_recs:
             return rule_recs
         
         try:
@@ -198,17 +173,15 @@ IMPORTANT: Only suggest charts if the columns actually exist in the dataset.
 Only suggest column pairs that make sense together.
 """
             
-            model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-            message = self.groq_client.messages.create(
-                model=model_name,
+            response_text = call_llm(
+                prompt=prompt,
+                system_prompt="You are an expert data visualization AI assistant.",
+                llm_config=llm_config,
+                temperature=0.2,
                 max_tokens=500,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
             )
             
             # Parse LLM response and add to recommendations
-            response_text = message.content[0].text
             additional_recs = self._parse_llm_response(response_text, df)
             
             # Merge and deduplicate

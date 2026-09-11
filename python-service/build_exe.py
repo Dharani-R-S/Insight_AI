@@ -46,17 +46,11 @@ args = [
     "--hidden-import=pydantic",
     "--hidden-import=pandas",
     "--hidden-import=sklearn",
-    "--hidden-import=sklearn.utils._typedefs",
-    "--hidden-import=sklearn.neighbors._typedefs",
     "--hidden-import=plotly",
     "--hidden-import=groq",
 ]
 
-# Include .env if it exists
-env_file = CURRENT_DIR / ".env"
-if env_file.exists():
-    args.append(f"--add-data={env_file}{os.pathsep}.")
-
+# Do not bundle .env into the executable; load configuration from the environment/userData at runtime.
 print("Running PyInstaller with arguments:", " ".join(args))
 PyInstaller.__main__.run(args)
 

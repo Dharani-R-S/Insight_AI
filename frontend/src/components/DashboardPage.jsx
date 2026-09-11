@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { authFetch } from '../utils/api';
 import { 
   Table, 
   Columns, 
@@ -177,12 +178,10 @@ export default function DashboardPage({
     const fetchRecommendations = async () => {
         setIsLoadingRecs(true);
         try {
-            const token = localStorage.getItem('auth_token');
-            const res = await fetch('/api/datasets/auto-visualize', {
+            const res = await authFetch('/api/datasets/auto-visualize', {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
                 body: JSON.stringify({
                     dataset_id: datasetInfo?.dataset_id,
