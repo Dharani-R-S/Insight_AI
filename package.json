@@ -5,6 +5,7 @@
   "main": "electron/main.cjs",
   "author": "InsightAI",
   "scripts": {
+    "frontend:install": "npm --prefix frontend install",
     "frontend:build": "npm --prefix frontend run build",
     "server:install": "npm --prefix server install",
     "python:build": "python python-service/build_exe.py",
@@ -12,7 +13,7 @@
     "electron:dev": "electron . --dev",
     "dist:win": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
-    "build:all": "npm run server:install && npm run frontend:build && npm run python:build && npm run dist:win"
+    "build:all": "npm run server:install && npm run frontend:install && npm run frontend:build && npm run python:build && npm run dist:win"
   },
   "build": {
     "appId": "com.insightai.bi",

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { authFetch } from '../utils/api';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, ScatterChart, Scatter,
   PieChart, Pie, Cell,
@@ -65,12 +66,10 @@ export default function AutoDashboard({
     setError(null);
 
     try {
-      const token = localStorage.getItem('auth_token');
-      const res = await fetch('/api/datasets/auto-dashboard', {
+      const res = await authFetch('/api/datasets/auto-dashboard', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           dataset_id: datasetInfo?.dataset_id,

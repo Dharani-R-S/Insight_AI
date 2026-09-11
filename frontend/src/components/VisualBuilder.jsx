@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import AutoDashboard from './AutoDashboard';
 import { createChartFileName, downloadSvgAsPng } from '../utils/exportUtils';
+import { authFetch } from '../utils/api';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, ScatterChart, Scatter,
   PieChart, Pie, Cell,
@@ -55,12 +56,10 @@ export default function VisualBuilder({
     
     setIsLoadingAuto(true);
     try {
-      const token = localStorage.getItem('auth_token');
-      const res = await fetch('/api/datasets/auto-visualize', {
+      const res = await authFetch('/api/datasets/auto-visualize', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           dataset_id: datasetInfo?.dataset_id,

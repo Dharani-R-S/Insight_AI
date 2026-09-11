@@ -46,8 +46,6 @@ args = [
     "--hidden-import=pydantic",
     "--hidden-import=pandas",
     "--hidden-import=sklearn",
-    "--hidden-import=sklearn.utils._typedefs",
-    "--hidden-import=sklearn.neighbors._typedefs",
     "--hidden-import=plotly",
     "--hidden-import=groq",
 ]

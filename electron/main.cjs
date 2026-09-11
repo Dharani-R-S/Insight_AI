@@ -254,6 +254,7 @@ function createSplashWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      devTools: isDev,
     },
   });
 
@@ -279,8 +280,13 @@ function createMainWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
+      devTools: isDev,
     },
   });
+
+  if (!isDev) {
+    mainWindow.removeMenu();
+  }
 
   const appUrl = `http://127.0.0.1:${EXPRESS_PORT}`;
   log(`Loading App URL: ${appUrl}`);
@@ -294,12 +300,27 @@ function createMainWindow() {
     mainWindow.focus();
   });
 
-  // Disable DevTools shortcuts in production unless --dev flag is passed
+  // Completely lock down DevTools and developer shortcuts in production
   if (!isDev) {
+    mainWindow.webContents.on('devtools-opened', () => {
+      mainWindow.webContents.closeDevTools();
+    });
+
     mainWindow.webContents.on('before-input-event', (event, input) => {
-      if ((input.control && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12') {
+      const key = (input.key || '').toLowerCase();
+      // Block F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C, Ctrl+U
+      if (
+        key === 'f12' ||
+        (input.control && input.shift && ['i', 'j', 'c'].includes(key)) ||
+        (input.control && key === 'u')
+      ) {
         event.preventDefault();
       }
+    });
+
+    // Disable right-click inspect context menu
+    mainWindow.webContents.on('context-menu', (event) => {
+      event.preventDefault();
     });
   }
 

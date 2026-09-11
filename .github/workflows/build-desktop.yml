@@ -1,0 +1,93 @@
+name: Build Desktop Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish a GitHub Release with installer executables'
+        type: boolean
+        required: false
+        default: false
+      release_tag:
+        description: 'Release Tag name (used when publishing a release, e.g. v1.0.0)'
+        type: string
+        required: false
+        default: 'v1.0.0'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Desktop App
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: Setup Python (3.11)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'python-service/requirements.txt'
+
+      - name: Install Root Dependencies
+        run: npm install
+
+      - name: Install Express Server Dependencies
+        run: npm --prefix server install
+
+      - name: Install Frontend Dependencies
+        run: npm --prefix frontend install
+
+      - name: Install Python Dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python-service/requirements.txt
+
+      - name: Build Frontend (Vite + React)
+        run: npm run frontend:build
+
+      - name: Build Python Standalone Service (PyInstaller)
+        run: python python-service/build_exe.py
+
+      - name: Package Windows Desktop App (Electron Builder)
+        run: npx electron-builder --win --publish never
+
+      - name: Upload Windows Installers as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: InsightAI-Studio-Windows-x64
+          path: |
+            dist-desktop/*.exe
+            dist-desktop/*.blockmap
+            dist-desktop/latest.yml
+          retention-days: 30
+
+      - name: Create / Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: InsightAI Studio Desktop ${{ inputs.release_tag || github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist-desktop/*.exe
+            dist-desktop/*.blockmap
+            dist-desktop/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -11,7 +11,8 @@ import {
   SignOut,
   LockKey,
   ShareNetwork,
-  GitMerge
+  GitMerge,
+  Gear
 } from '@phosphor-icons/react';
 
 const NAV_ITEMS = [
@@ -25,10 +26,23 @@ const NAV_ITEMS = [
   { id: 'sql', label: 'SQL Query', icon: Database },
 ];
 
-export default function Sidebar({ activePage, onNavigate, datasetInfo, user, onLogout, children, theme, onToggleTheme }) {
+export default function Sidebar({ 
+  activePage, 
+  onNavigate, 
+  datasetInfo, 
+  user, 
+  onLogout, 
+  children, 
+  theme, 
+  onToggleTheme,
+  onOpenSettings,
+  llmConfig,
+}) {
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)
     : '?';
+
+  const providerName = (llmConfig?.provider || 'groq').toUpperCase();
 
   return (
     <aside className="w-56 h-screen flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] shrink-0 select-none">
@@ -120,7 +134,7 @@ export default function Sidebar({ activePage, onNavigate, datasetInfo, user, onL
         )}
       </nav>
 
-      {/* User / Sign Out Footer */}
+      {/* User / Settings / Sign Out Footer */}
       <div className="px-3 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg-card)]">
         {user ? (
           <div className="flex items-center justify-between">
@@ -130,21 +144,44 @@ export default function Sidebar({ activePage, onNavigate, datasetInfo, user, onL
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-mono font-bold text-[var(--color-text-primary)] truncate leading-none mb-0.5">{user.name}</p>
-                <p className="text-[9px] text-[var(--color-text-muted)] truncate font-mono leading-none">{user.email}</p>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] inline-block"></span>
+                  <span className="text-[9px] text-[var(--color-text-muted)] font-mono truncate">{providerName}</span>
+                </div>
               </div>
             </div>
-            <button
-              onClick={onLogout}
-              title="Sign out"
-              className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] p-1.5 rounded hover:bg-[var(--color-danger)]/10 transition-colors cursor-pointer"
-            >
-              <SignOut size={14} />
-            </button>
+            
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={onOpenSettings}
+                title="AI Engine & API Keys Settings"
+                className="text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] p-1.5 rounded-lg hover:bg-[var(--color-accent)]/10 transition-colors cursor-pointer"
+              >
+                <Gear size={15} weight="bold" />
+              </button>
+              <button
+                onClick={onLogout}
+                title="Sign out"
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] p-1.5 rounded-lg hover:bg-[var(--color-danger)]/10 transition-colors cursor-pointer"
+              >
+                <SignOut size={15} />
+              </button>
+            </div>
           </div>
         ) : (
-          <p className="text-[9px] text-[var(--color-text-muted)] text-center font-mono font-bold">Engine: Groq LLM</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] text-[var(--color-text-muted)] font-mono font-bold">Engine: {providerName}</p>
+            <button
+              onClick={onOpenSettings}
+              title="Settings"
+              className="text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] p-1 rounded hover:bg-[var(--color-accent)]/10 transition-colors cursor-pointer"
+            >
+              <Gear size={13} weight="bold" />
+            </button>
+          </div>
         )}
       </div>
     </aside>
   );
 }
+

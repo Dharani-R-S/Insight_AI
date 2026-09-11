@@ -142,3 +142,29 @@ curl -X POST http://localhost:5000/api/ask \
 | Backend | Node.js, Express 4, Multer, Axios |
 | AI Service | Python, FastAPI, Groq (Llama 3 70B) |
 | Data | Pandas, SQLite, Plotly, Scikit-learn |
+
+## 🚀 Cloud Build & Download (GitHub Actions)
+
+To avoid laptop overheating and high CPU load during the PyInstaller and Electron packaging process, you can build the Windows desktop app directly on GitHub's cloud runners:
+
+### How to Build Online:
+1. Push your code to your GitHub repository:
+   ```bash
+   git add .
+   git commit -m "Configure GitHub Actions desktop build"
+   git push origin main
+   ```
+2. In your GitHub repository, navigate to the **Actions** tab.
+3. In the left sidebar, click **Build Desktop Application**.
+4. Click the **Run workflow** dropdown on the right:
+   - (Optional) Check **"Publish a GitHub Release with installer executables"** if you want a permanent release asset.
+   - Click the green **Run workflow** button.
+
+### How to Download the App:
+1. When the build completes (usually ~5-8 minutes), click on the completed workflow run.
+2. Scroll down to the **Artifacts** section at the bottom of the summary page.
+3. Click on **`InsightAI-Studio-Windows-x64`** to download the zip file.
+4. Extract the zip to find:
+   - **`InsightAI Studio Setup 1.0.0.exe`**: Full installer (creates start menu and desktop shortcuts).
+   - **`InsightAI Studio 1.0.0.exe`**: Portable executable (runs directly without installation).
+5. If release publishing was enabled, you can also download directly from the **Releases** page of your repository.

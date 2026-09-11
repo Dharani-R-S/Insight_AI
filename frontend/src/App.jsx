@@ -14,16 +14,30 @@ import DataCleaningModal from './components/DataCleaningModal';
 import KnowledgeGraph from './components/KnowledgeGraph';
 import DataTransformStudio from './components/DataTransformStudio';
 import PostUploadTransformModal from './components/PostUploadTransformModal';
+import SettingsModal, { getStoredLlmConfig } from './components/SettingsModal';
 import { Broom, Sparkle, MagnifyingGlass, X } from '@phosphor-icons/react';
 
 function authFetch(url, options = {}) {
   const token = localStorage.getItem('auth_token');
+  let llmConfig = {};
+  try {
+    const raw = localStorage.getItem('insightai_llm_config');
+    if (raw) llmConfig = JSON.parse(raw);
+  } catch {}
+
+  const headers = {
+    ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  if (llmConfig.provider) headers['x-llm-provider'] = llmConfig.provider;
+  if (llmConfig.apiKey) headers['x-llm-api-key'] = llmConfig.apiKey;
+  if (llmConfig.model) headers['x-llm-model'] = llmConfig.model;
+  if (llmConfig.baseUrl) headers['x-llm-base-url'] = llmConfig.baseUrl;
+
   return fetch(url, {
     ...options,
-    headers: {
-      ...(options.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers,
   });
 }
 
@@ -44,6 +58,8 @@ export default function App() {
   const [savedDashboard, setSavedDashboard] = useState(null);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [cachedRecommendations, setCachedRecommendations] = useState(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [llmConfig, setLlmConfig] = useState(getStoredLlmConfig);
 
   // NL Data Retrieval Filter State
   const [nlFilterInput, setNlFilterInput] = useState('');
@@ -579,6 +595,8 @@ export default function App() {
         onLogout={handleLogout}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        llmConfig={llmConfig}
       >
         <FileUpload
           onUploadSuccess={handleUploadSuccess}
@@ -592,6 +610,15 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {renderPage()}
       </main>
+
+      {/* LLM & API Key Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSaveConfig={(newConfig) => {
+          setLlmConfig(newConfig);
+        }}
+      />
 
       {/* Post-Upload Transformation Prompt Modal */}
       {showPostUploadModal && (
