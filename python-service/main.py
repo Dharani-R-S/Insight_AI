@@ -570,6 +570,36 @@ async def update_settings(req: SettingsUpdateRequest):
     return await get_settings()
 
 
+@app.post("/test-connection")
+async def test_connection(req: SettingsUpdateRequest):
+    """
+    Test LLM connectivity for a given provider, model, and API key.
+    """
+    try:
+        from services.llm import call_llm
+        test_key = req.api_key.strip() if (req.api_key and req.api_key.strip()) else os.getenv("GROQ_API_KEY", "")
+        llm_config = {
+            "provider": req.provider or "groq",
+            "model": req.model or "openai/gpt-oss-120b",
+            "api_key": test_key,
+        }
+        res = call_llm(
+            prompt="Respond with the single word 'OK'.",
+            system_prompt="You are a health check system. Reply with 'OK'.",
+            llm_config=llm_config,
+            max_tokens=10,
+        )
+        return {
+            "status": "ok",
+            "message": f"Successfully connected to {llm_config['provider'].upper()} ({llm_config['model']})!",
+            "response": res,
+        }
+    except Exception as e:
+        print(f"❌ AI connection test failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
 # ─── Transformation Endpoints ───
 class JoinRequest(BaseModel):
     dataset1_rows: list

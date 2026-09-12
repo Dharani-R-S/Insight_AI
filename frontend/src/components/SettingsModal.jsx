@@ -102,16 +102,25 @@ export default function SettingsModal({
     setTestStatus(null);
     try {
       const activeModel = model === 'custom' ? customModel : model;
-      const res = await authFetch('/api/ask', {
+      const res = await authFetch('/api/settings/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: 'Show all data' }),
+        body: JSON.stringify({
+          provider,
+          model: activeModel,
+          api_key: apiKey ? apiKey.trim() : undefined,
+        }),
       });
+      const data = await res.json();
       if (res.ok) {
-        setTestStatus({ ok: true, message: `Connected to ${activeModel} successfully!` });
+        setTestStatus({ ok: true, message: data.message || `Connected to ${activeModel} successfully!` });
+        if (apiKey && apiKey.trim()) {
+          setHasServerKey(true);
+          const k = apiKey.trim();
+          setMaskedKey(k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : 'Configured');
+        }
       } else {
-        const errData = await res.json();
-        setTestStatus({ ok: false, message: errData.error || 'Connection failed' });
+        setTestStatus({ ok: false, message: data.error || 'Connection failed' });
       }
     } catch (err) {
       setTestStatus({ ok: false, message: err.message || 'Connection test failed' });
@@ -136,7 +145,7 @@ export default function SettingsModal({
 
       // Push to backend
       if (authFetch) {
-        await authFetch('/api/settings', {
+        const res = await authFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -145,6 +154,11 @@ export default function SettingsModal({
             api_key: apiKey ? apiKey.trim() : undefined,
           }),
         });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.has_key) setHasServerKey(true);
+          if (data.masked_key) setMaskedKey(data.masked_key);
+        }
       }
 
       setSaveSuccess(true);
@@ -153,9 +167,8 @@ export default function SettingsModal({
       }
 
       setTimeout(() => {
-        setSaveSuccess(false);
         onClose();
-      }, 900);
+      }, 800);
     } catch (err) {
       console.error('Failed to save settings:', err);
       setTestStatus({ ok: false, message: 'Could not save settings to server.' });

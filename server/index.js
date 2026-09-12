@@ -451,6 +451,18 @@ app.post('/api/settings', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/settings/test', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.post(`${PYTHON_URL}/test-connection`, req.body, { timeout: 15000 });
+    res.json(response.data);
+  } catch (err) {
+    console.error('Settings test error:', err.response?.data || err.message);
+    res.status(err.response?.status || 400).json({
+      error: err.response?.data?.detail || err.message || 'AI Connection failed',
+    });
+  }
+});
+
 // ─── Data Transformation Proxies ───
 app.post('/api/transform/join', async (req, res) => {
   try {
