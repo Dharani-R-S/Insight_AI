@@ -7,7 +7,6 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,24 +17,51 @@ const PORT = process.env.PORT || 5000;
 const PYTHON_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
 const JWT_SECRET = process.env.JWT_SECRET || 'insightai-secret-key-change-in-production';
 
-// ─── Auth DB Setup ───
-const authDb = new Database(path.join(__dirname, 'auth.db'));
-authDb.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  )
-`);
+// ─── Storage Directory Setup ───
+const dataDir = process.env.APP_DATA_DIR || __dirname;
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// ─── Users Store (Zero Native Dependency, 100% Cross-Platform) ───
+const usersFile = path.join(dataDir, 'users.json');
+
+// Initialize usersFile from existing seed if available
+if (!fs.existsSync(usersFile)) {
+  const seedFile = path.join(__dirname, 'users.json');
+  if (fs.existsSync(seedFile)) {
+    try {
+      fs.copyFileSync(seedFile, usersFile);
+    } catch {}
+  }
+}
+
+function getUsers() {
+  try {
+    if (fs.existsSync(usersFile)) {
+      const data = fs.readFileSync(usersFile, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error('Error reading users.json:', e);
+  }
+  return [];
+}
+
+function saveUsers(users) {
+  try {
+    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('Error saving users.json:', e);
+  }
+}
 
 // ─── Middleware ───
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
+// Ensure uploads directory exists in writable dataDir
+const uploadsDir = path.join(dataDir, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -67,21 +93,27 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    const existing = authDb.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const users = getUsers();
+    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (existing) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
-    const result = authDb.prepare(
-      'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)'
-    ).run(name, email, password_hash);
+    const user = {
+      id: Date.now(),
+      name,
+      email,
+      password_hash,
+      created_at: new Date().toISOString()
+    };
+    users.push(user);
+    saveUsers(users);
 
-    const user = { id: result.lastInsertRowid, name, email };
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     console.log(`✅ New user registered: ${email}`);
-    res.json({ token, user });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
   } catch (err) {
     console.error('❌ Signup error:', err.message);
     res.status(500).json({ error: 'Signup failed. Please try again.' });
@@ -97,7 +129,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const row = authDb.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const users = getUsers();
+    const row = users.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (!row) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -679,6 +712,21 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', python_service: PYTHON_URL });
 });
 
+// ─── Serve Static Frontend in Production / Desktop ───
+const frontendDist = process.env.FRONTEND_DIST || path.join(__dirname, '../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  console.log(`🌐 Serving static frontend from: ${frontendDist}`);
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+} else {
+  console.warn(`⚠️ Frontend dist directory not found at: ${frontendDist}`);
+}
+
 // ─── Error Handler ───
 app.use((err, req, res, next) => {
   console.error('Server error:', err.message);
@@ -692,5 +740,5 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Express server running on http://localhost:${PORT}`);
   console.log(`📡 Python service: ${PYTHON_URL}`);
   console.log(`📁 Uploads directory: ${uploadsDir}`);
-  console.log(`🔐 Auth DB: ${path.join(__dirname, 'auth.db')}\n`);
+  console.log(`🔐 Users Store: ${usersFile}\n`);
 });

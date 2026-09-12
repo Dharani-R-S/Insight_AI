@@ -292,6 +292,15 @@ function createMainWindow() {
   log(`Loading App URL: ${appUrl}`);
   mainWindow.loadURL(appUrl);
 
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    log(`[Window] did-fail-load (${errorCode}): ${errorDescription}. Retrying in 1.5s...`);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(appUrl);
+      }
+    }, 1500);
+  });
+
   mainWindow.once('ready-to-show', () => {
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.close();
