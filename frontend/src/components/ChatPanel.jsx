@@ -132,6 +132,38 @@ export default function ChatPanel({
     }
   }, [datasetInfo?.filename, datasetInfo?.columns?.length]);
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSubmit = (e) => {
+    if (e) e.preventDefault();
+    if (!input.trim() || isLoading) return;
+    onSendMessage(input.trim(), { question: input.trim(), mode });
+    setInput('');
+  };
+
+  const handleHistorySelect = (question) => {
+    setInput(question);
+    setShowHistory(false);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleBookmark = (question, sql) => {
+    const title = prompt('Name this verified query:', question) || question;
+    const newBookmark = { id: Date.now(), title, question, sql, timestamp: Date.now() };
+    const updated = [newBookmark, ...bookmarks.filter((b) => b.question !== question)];
+    setBookmarks(updated);
+    try { localStorage.setItem('bookmarked_queries', JSON.stringify(updated)); } catch {}
+  };
+
+  const handleRemoveBookmark = (id, e) => {
+    e.stopPropagation();
+    const updated = bookmarks.filter((b) => b.id !== id);
+    setBookmarks(updated);
+    try { localStorage.setItem('bookmarked_queries', JSON.stringify(updated)); } catch {}
+  };
+
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-primary)]">
 
