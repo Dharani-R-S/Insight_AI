@@ -419,6 +419,25 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /api/recommend-queries (protected) ───
+app.post('/api/recommend-queries', requireAuth, async (req, res) => {
+  try {
+    const response = await axios.post(`${PYTHON_URL}/recommend-queries`, req.body, { timeout: 15000 });
+    res.json(response.data);
+  } catch (err) {
+    console.warn('⚠️ AI recommend-queries failed:', err.message);
+    const cols = req.body.columns || [];
+    res.json({
+      queries: [
+        'Show total sales per region',
+        'Top 5 categories by volume',
+        'Average values across groups',
+        'Distribution of records'
+      ]
+    });
+  }
+});
+
 // ─── Settings Endpoints (protected) ───
 app.get('/api/settings', requireAuth, async (req, res) => {
   try {

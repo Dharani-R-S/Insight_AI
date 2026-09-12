@@ -498,6 +498,97 @@ async def auto_dashboard(request: AutoDashboardRequest):
         }
 
 
+# ─── POST /recommend-queries ───
+class RecommendQueriesRequest(BaseModel):
+    columns: list = []
+    schema_info: dict = {}
+    sample_rows: list = []
+
+
+@app.post("/recommend-queries")
+async def recommend_queries(req: RecommendQueriesRequest):
+    """
+    Generate natural language analytical questions tailored to the uploaded dataset using AI (Groq).
+    """
+    try:
+        from services.llm import call_llm
+        cols_info = []
+        for col in req.columns:
+            dtype = req.schema_info.get(col, "unknown") if req.schema_info else "unknown"
+            cols_info.append(f"{col} ({dtype})")
+        cols_str = ", ".join(cols_info) if cols_info else ", ".join(req.columns)
+
+        sample_str = ""
+        if req.sample_rows and len(req.sample_rows) > 0:
+            import json
+            sample_str = f"\nSample row: {json.dumps(req.sample_rows[0])}"
+
+        prompt = f"""You are a data analytics AI assistant.
+Given this dataset schema:
+Columns: {cols_str}{sample_str}
+
+Generate 6 clear, diverse, and practical natural language questions that a business user would ask about this specific data (for example: 'Show total sales per region', 'Average customer age by gender', 'Top 5 customers by acquisition cost', 'Distribution of customer age').
+
+STRICT RULES:
+1. Every query must use concepts or columns present in the dataset.
+2. Formulate each as a concise phrase (4-8 words).
+3. Output ONLY a valid JSON array of 6 strings, e.g. ["Query 1", "Query 2", "Query 3", "Query 4", "Query 5", "Query 6"]. No markdown, no commentary."""
+
+        raw = call_llm(
+            prompt=prompt,
+            system_prompt="Output ONLY a JSON array of 6 strings. No markdown code blocks.",
+            temperature=0.3,
+            max_tokens=300,
+        )
+
+        import json
+        clean_raw = raw.strip()
+        clean_raw = re.sub(r'^```json\s*', '', clean_raw)
+        clean_raw = re.sub(r'^```\s*', '', clean_raw)
+        clean_raw = re.sub(r'\s*```$', '', clean_raw).strip()
+        
+        parsed = json.loads(clean_raw)
+        if isinstance(parsed, dict) and "queries" in parsed:
+            parsed = parsed["queries"]
+        if isinstance(parsed, list) and len(parsed) > 0:
+            return {"queries": [str(q).strip(' "\'') for q in parsed[:8]]}
+    except Exception as e:
+        print(f"⚠️ AI query recommendation fallback: {e}")
+
+    # Fallback heuristic queries based on column names
+    fallback = []
+    num_cols = [c for c, d in (req.schema_info or {}).items() if any(t in str(d).lower() for t in ['int', 'float', 'real', 'num', 'cost', 'sales', 'price', 'amount', 'age', 'score', 'salary'])]
+    cat_cols = [c for c, d in (req.schema_info or {}).items() if c not in num_cols and not c.lower().endswith('_id')]
+    
+    if not num_cols:
+        num_cols = [c for c in req.columns if any(k in c.lower() for k in ['sales', 'cost', 'price', 'amount', 'revenue', 'profit', 'age', 'rate', 'total', 'count', 'qty', 'score'])]
+    if not cat_cols:
+        cat_cols = [c for c in req.columns if c not in num_cols and not c.lower().endswith('_id')]
+    
+    clean_n = lambda s: s.replace('_', ' ').title()
+    if num_cols and cat_cols:
+        fallback.append(f"Show total {clean_n(num_cols[0])} per {clean_n(cat_cols[0])}")
+        fallback.append(f"Average {clean_n(num_cols[0])} by {clean_n(cat_cols[0])}")
+    if len(cat_cols) > 1 and num_cols:
+        fallback.append(f"Compare {clean_n(num_cols[0])} across {clean_n(cat_cols[1])}")
+    if num_cols:
+        fallback.append(f"Distribution of {clean_n(num_cols[0])}")
+        if len(num_cols) > 1:
+            fallback.append(f"Relationship between {clean_n(num_cols[0])} and {clean_n(num_cols[1])}")
+    if cat_cols:
+        fallback.append(f"Top 5 {clean_n(cat_cols[0])} by count")
+    
+    if not fallback:
+        fallback = [
+            "Show total sales per region",
+            "Top 5 categories by count",
+            "Distribution of records",
+            "Average values by category",
+        ]
+        
+    return {"queries": fallback}
+
+
 # ─── Settings Endpoints ───
 class SettingsUpdateRequest(BaseModel):
     provider: str = "groq"

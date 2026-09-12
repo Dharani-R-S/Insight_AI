@@ -337,16 +337,18 @@ export default function App() {
               </div>
               <div className="flex-1 min-h-0">
                 <ChatPanel
-                messages={messages}
-                onSendMessage={handleSendMessage}
-                isLoading={isLoading}
-                hasDataset={!!datasetInfo}
-                queryHistory={queryHistory}
-                onClearHistory={() => {
-                  setQueryHistory([]);
-                  try { localStorage.removeItem('query_history'); } catch {}
-                }}
-              />
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  hasDataset={!!datasetInfo}
+                  datasetInfo={datasetInfo}
+                  authFetch={authFetch}
+                  queryHistory={queryHistory}
+                  onClearHistory={() => {
+                    setQueryHistory([]);
+                    try { localStorage.removeItem('query_history'); } catch {}
+                  }}
+                />
               </div>
             </div>
             {/* Results column */}

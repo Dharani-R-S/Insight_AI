@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Database, 
   ChartBar, 
@@ -10,7 +10,9 @@ import {
   Brain,
   BookmarkSimple,
   Bookmark,
-  Trash
+  Trash,
+  Sparkle,
+  Lightning
 } from '@phosphor-icons/react';
 
 function formatRelativeTime(ts) {
@@ -28,6 +30,8 @@ export default function ChatPanel({
   onSendMessage,
   isLoading,
   hasDataset,
+  datasetInfo,
+  authFetch,
   queryHistory = [],
   onClearHistory,
 }) {
@@ -36,6 +40,9 @@ export default function ChatPanel({
   const [showHistory, setShowHistory] = useState(false);
   const [historyTab, setHistoryTab] = useState('history'); // 'history' | 'bookmarks'
   
+  const [aiRecommendations, setAiRecommendations] = useState([]);
+  const [isLoadingRecs, setIsLoadingRecs] = useState(false);
+
   const [bookmarks, setBookmarks] = useState(() => {
     try {
       const raw = localStorage.getItem('bookmarked_queries');
@@ -48,52 +55,82 @@ export default function ChatPanel({
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Compute smart heuristic recommendations immediately from columns & schema
+  const computeHeuristicRecs = useCallback((info) => {
+    if (!info || !info.columns || info.columns.length === 0) {
+      return [
+        'Show total sales per region',
+        'Top 5 categories by volume',
+        'Average values across groups',
+        'Distribution of records'
+      ];
+    }
+    const cols = info.columns;
+    const schema = info.schema || {};
+    const clean = (s) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    
+    const numCols = cols.filter((c) => {
+      const t = String(schema[c] || '').toLowerCase();
+      return ['int', 'float', 'real', 'num', 'cost', 'sales', 'price', 'amount', 'age', 'revenue', 'profit', 'rate', 'total', 'score', 'salary'].some(k => t.includes(k) || c.toLowerCase().includes(k));
+    });
+    const catCols = cols.filter((c) => !numCols.includes(c) && !c.toLowerCase().endsWith('_id'));
+    
+    const recs = [];
+    if (numCols.length > 0 && catCols.length > 0) {
+      recs.push(`Show total ${clean(numCols[0])} per ${clean(catCols[0])}`);
+      recs.push(`Average ${clean(numCols[0])} by ${clean(catCols[0])}`);
+    }
+    if (catCols.length > 1 && numCols.length > 0) {
+      recs.push(`Compare ${clean(numCols[0])} across ${clean(catCols[1])}`);
+    }
+    if (catCols.length > 0) {
+      recs.push(`Top 5 ${clean(catCols[0])} by count`);
+    }
+    if (numCols.length > 0) {
+      recs.push(`Distribution of ${clean(numCols[0])}`);
+      if (numCols.length > 1) {
+        recs.push(`Relationship between ${clean(numCols[0])} and ${clean(numCols[1])}`);
+      }
+    }
+    return recs.length >= 3 ? recs : ['Show total sales per region', 'Top 5 categories by count', 'Average values across groups'];
+  }, []);
+
+  const fetchAiRecommendations = useCallback(async () => {
+    if (!datasetInfo || !datasetInfo.columns || datasetInfo.columns.length === 0) return;
+    setIsLoadingRecs(true);
+    try {
+      if (authFetch) {
+        const res = await authFetch('/api/recommend-queries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            columns: datasetInfo.columns,
+            schema_info: datasetInfo.schema || {},
+            sample_rows: (datasetInfo.sample_rows || []).slice(0, 3),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.queries && data.queries.length > 0) {
+            setAiRecommendations(data.queries);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('AI recommendation fetch error:', err);
+    } finally {
+      setIsLoadingRecs(false);
+    }
+    setAiRecommendations(computeHeuristicRecs(datasetInfo));
+  }, [datasetInfo, authFetch, computeHeuristicRecs]);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    onSendMessage(input.trim(), { question: input.trim(), mode });
-    setInput('');
-  };
-
-  const handleHistorySelect = (question) => {
-    setInput(question);
-    setShowHistory(false);
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
-
-  const handleBookmark = (question, sql) => {
-    const title = prompt('Name this verified query:', question) || question;
-    const newBookmark = { id: Date.now(), title, question, sql, timestamp: Date.now() };
-    const updated = [newBookmark, ...bookmarks.filter((b) => b.question !== question)];
-    setBookmarks(updated);
-    try { localStorage.setItem('bookmarked_queries', JSON.stringify(updated)); } catch {}
-  };
-
-  const handleRemoveBookmark = (id, e) => {
-    e.stopPropagation();
-    const updated = bookmarks.filter((b) => b.id !== id);
-    setBookmarks(updated);
-    try { localStorage.setItem('bookmarked_queries', JSON.stringify(updated)); } catch {}
-  };
-
-  const exampleQueries = {
-    analyze: [
-      'Show total sales per region',
-      'Top 5 products by profit',
-      'Monthly sales trend',
-      'Predict next month sales',
-    ],
-    visualize: [
-      'Show revenue over time',
-      'Compare sales by category',
-      'Distribution of prices',
-      'Relationship between X and Y',
-    ],
-  };
+    if (datasetInfo && datasetInfo.columns && datasetInfo.columns.length > 0) {
+      setAiRecommendations(computeHeuristicRecs(datasetInfo));
+      fetchAiRecommendations();
+    }
+  }, [datasetInfo?.filename, datasetInfo?.columns?.length]);
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-primary)]">
@@ -253,14 +290,30 @@ export default function ChatPanel({
             </div>
             {hasDataset && (
               <div className="flex flex-col gap-2 w-full pt-2">
-                {exampleQueries[mode].map((q, i) => (
+                <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)] font-semibold px-1">
+                  <span className="flex items-center gap-1 text-[var(--color-accent)]">
+                    <Sparkle size={12} weight="fill" />
+                    AI Recommended Queries
+                  </span>
+                  <button
+                    type="button"
+                    onClick={fetchAiRecommendations}
+                    disabled={isLoadingRecs}
+                    className="hover:text-[var(--color-accent)] transition-colors cursor-pointer flex items-center gap-1 text-[10px]"
+                    title="Generate new AI suggestions"
+                  >
+                    <ArrowCounterClockwise size={10} className={isLoadingRecs ? 'animate-spin' : ''} />
+                    <span>{isLoadingRecs ? 'Generating...' : 'Refresh'}</span>
+                  </button>
+                </div>
+                {aiRecommendations.slice(0, 4).map((q, i) => (
                   <button
                     key={i}
                     onClick={() => { setInput(q); inputRef.current?.focus(); }}
                     className="card text-left text-xs px-3.5 py-2.5 bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-accent)] font-semibold transition-all group cursor-pointer flex items-center justify-between"
                   >
                     <span className="truncate">{q}</span>
-                    <ArrowRight size={12} className="opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" />
+                    <ArrowRight size={12} className="opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5 text-[var(--color-accent)]" />
                   </button>
                 ))}
               </div>
@@ -326,8 +379,46 @@ export default function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* AI Suggested Queries Interactive Chips */}
+      {hasDataset && aiRecommendations.length > 0 && (
+        <div className="px-3.5 pt-2 pb-1.5 border-t border-[var(--color-border-soft)] bg-[var(--color-bg-card)]/60 flex flex-col gap-1.5 shrink-0">
+          <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)] font-semibold px-0.5">
+            <span className="flex items-center gap-1 text-[var(--color-accent)]">
+              <Sparkle size={11} weight="fill" />
+              AI Suggested Queries
+            </span>
+            <button
+              type="button"
+              onClick={fetchAiRecommendations}
+              disabled={isLoadingRecs}
+              className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors cursor-pointer flex items-center gap-1"
+              title="Get new AI recommendations"
+            >
+              <ArrowCounterClockwise size={10} className={isLoadingRecs ? 'animate-spin' : ''} />
+              <span>{isLoadingRecs ? 'Analyzing...' : 'Refresh'}</span>
+            </button>
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar scroll-smooth">
+            {aiRecommendations.map((q, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  setInput(q);
+                  inputRef.current?.focus();
+                }}
+                className="shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-full bg-[var(--color-bg-secondary)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] border border-[var(--color-border)] hover:border-[var(--color-accent)]/50 text-[var(--color-text-secondary)] transition-all cursor-pointer truncate max-w-[240px] shadow-sm flex items-center gap-1.5"
+                title={q}
+              >
+                <span>{q}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-[var(--color-border-soft)] bg-[var(--color-bg-primary)]/80">
+      <form onSubmit={handleSubmit} className="p-3 border-t border-[var(--color-border-soft)] bg-[var(--color-bg-primary)]/80">
         <div className="flex gap-2.5 items-center bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl px-3.5 py-2.5 focus-within:border-[var(--color-accent)] focus-within:shadow-sm transition-all">
           <input
             ref={inputRef}
