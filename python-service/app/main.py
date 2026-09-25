@@ -13,9 +13,11 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.api.routes.analytics import router as analytics_router
 from app.api.routes.transform import router as transform_router
+from app.api.routes.visualization import router as visualization_router
 from app.api.legacy import router as legacy_router
 from app.core.config import settings
 from app.db.session import Base, engine
+
 
 # Configure Structured Logging
 logging.basicConfig(
@@ -81,7 +83,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(analytics_router)
 app.include_router(transform_router)
+app.include_router(visualization_router)
 app.include_router(legacy_router)
+
 
 
 
