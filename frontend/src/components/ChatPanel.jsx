@@ -130,7 +130,8 @@ export default function ChatPanel({
       setAiRecommendations(computeHeuristicRecs(datasetInfo));
       fetchAiRecommendations();
     }
-  }, [datasetInfo?.filename, datasetInfo?.columns?.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetInfo?.filename, datasetInfo?.columns?.length, computeHeuristicRecs, fetchAiRecommendations]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

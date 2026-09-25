@@ -152,7 +152,7 @@ export default function AutoDashboard({
               <Legend />
               {chart.series && chart.series.map((seriesName, sIdx) => (
                 <Bar key={seriesName} dataKey={seriesName} radius={[6, 6, 0, 0]}>
-                  {chart.data.map((_, entryIdx) => (
+                  {chart.data && chart.data.map((_, entryIdx) => (
                     <Cell key={`cell-${entryIdx}`} fill={palette[(entryIdx + sIdx) % palette.length]} />
                   ))}
                 </Bar>
@@ -229,7 +229,7 @@ export default function AutoDashboard({
               </YAxis>
               <Tooltip {...tooltipStyle} formatter={tooltipFormatter} />
               <Scatter data={chart.data}>
-                {chart.data.map((_, i) => (
+                {chart.data && chart.data.map((_, i) => (
                   <Cell key={i} fill={palette[i % palette.length]} />
                 ))}
               </Scatter>
@@ -252,7 +252,7 @@ export default function AutoDashboard({
                 paddingAngle={3}
                 label={({ name, percent }) => `${formatAxisLabel(name)} ${(percent * 100).toFixed(0)}%`}
               >
-                {chart.data.map((_, index) => (
+                {chart.data && chart.data.map((_, index) => (
                   <Cell key={index} fill={palette[index % palette.length]} />
                 ))}
               </Pie>
@@ -274,7 +274,7 @@ export default function AutoDashboard({
               </YAxis>
               <Tooltip {...tooltipStyle} formatter={tooltipFormatter} />
               <Bar dataKey={chart.y_axis} radius={[6, 6, 0, 0]}>
-                {chart.data.map((_, index) => (
+                {chart.data && chart.data.map((_, index) => (
                   <Cell key={`hist-${index}`} fill={palette[index % palette.length]} />
                 ))}
               </Bar>
