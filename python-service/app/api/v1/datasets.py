@@ -24,10 +24,10 @@ async def ingest_dataset(
 ):
     """Stateless file ingestion. Converts CSV, TSV, JSON, or Parquet uploads directly into DuckDB Parquet storage."""
     file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in [".csv", ".tsv", ".txt", ".json", ".parquet"]:
+    if file_ext not in [".csv", ".tsv", ".txt", ".json", ".parquet", ".xlsx", ".xls", ".xlsm", ".xlsb"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file format '{file_ext}'. Supported formats: CSV, TSV, JSON, Parquet.",
+            detail=f"Unsupported file format '{file_ext}'. Supported formats: CSV, TSV, Excel (.xlsx, .xls), JSON, Parquet.",
         )
 
     dataset_id = str(uuid.uuid4())

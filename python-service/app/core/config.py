@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     DUCKDB_MEMORY_LIMIT: str = "4GB"
     DUCKDB_THREADS: int = 4
 
+    # Groq API Configuration
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

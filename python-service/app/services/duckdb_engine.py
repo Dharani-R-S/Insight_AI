@@ -54,26 +54,39 @@ class DuckDBEngine:
         try:
             suffix = file_path.suffix.lower()
 
-            # Materialize source file into DuckDB temporary relation
+            # Materialize source file into DuckDB temporary relation or write Parquet directly
             if suffix in [".csv", ".txt", ".tsv"]:
                 delim = "\t" if suffix == ".tsv" else ","
                 read_stmt = (
                     f"SELECT * FROM read_csv_auto('{file_path.as_posix()}', "
                     f"delim='{delim}', header=True, ignore_errors=True)"
                 )
+                copy_stmt = (
+                    f"COPY ({read_stmt}) TO '{output_parquet_path.as_posix()}' "
+                    f"(FORMAT PARQUET, COMPRESSION 'SNAPPY')"
+                )
+                conn.execute(copy_stmt)
             elif suffix == ".json":
                 read_stmt = f"SELECT * FROM read_json_auto('{file_path.as_posix()}')"
+                copy_stmt = (
+                    f"COPY ({read_stmt}) TO '{output_parquet_path.as_posix()}' "
+                    f"(FORMAT PARQUET, COMPRESSION 'SNAPPY')"
+                )
+                conn.execute(copy_stmt)
             elif suffix == ".parquet":
                 read_stmt = f"SELECT * FROM read_parquet('{file_path.as_posix()}')"
+                copy_stmt = (
+                    f"COPY ({read_stmt}) TO '{output_parquet_path.as_posix()}' "
+                    f"(FORMAT PARQUET, COMPRESSION 'SNAPPY')"
+                )
+                conn.execute(copy_stmt)
+            elif suffix in [".xlsx", ".xls", ".xlsm", ".xlsb"]:
+                import pandas as pd
+                df = pd.read_excel(file_path)
+                df.columns = [str(c).strip() for c in df.columns]
+                df.to_parquet(str(output_parquet_path), engine="pyarrow", compression="snappy", index=False)
             else:
                 raise ValueError(f"Unsupported file format for ingestion: {suffix}")
-
-            # Export relation directly into Parquet with Snappy compression
-            copy_stmt = (
-                f"COPY ({read_stmt}) TO '{output_parquet_path.as_posix()}' "
-                f"(FORMAT PARQUET, COMPRESSION 'SNAPPY')"
-            )
-            conn.execute(copy_stmt)
 
             # Extract dataset metadata statelessly from generated Parquet file
             count_res = conn.execute(

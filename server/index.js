@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const PYTHON_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
+const PYTHON_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 const JWT_SECRET = process.env.JWT_SECRET || 'insightai-secret-key-change-in-production';
 
 // ─── Storage Directory Setup ───

@@ -2,7 +2,7 @@
 FastAPI Dependencies for Security, Database Sessions, and Current User Verification.
 """
 
-from typing import Generator
+from typing import Generator, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -56,3 +56,19 @@ def get_current_user(
         )
 
     return user
+
+
+def get_optional_current_user(
+    auth: HTTPAuthorizationCredentials = Depends(security_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Dependency for optionally validating JWT token without raising HTTP 401 if omitted."""
+    if not auth or not auth.credentials:
+        return None
+    payload = decode_access_token(auth.credentials)
+    if not payload:
+        return None
+    user_id: str = payload.get("sub")
+    if not user_id:
+        return None
+    return db.query(User).filter(User.id == user_id).first()
