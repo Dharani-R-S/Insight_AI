@@ -1,81 +1,150 @@
-# InsightAI — Intelligent Business Intelligence & Analytics Platform
+# InsightAI — Intelligent Enterprise BI & Vectorized Data Analytics Platform
 
-InsightAI is an enterprise-grade, conversational business intelligence and data transformation platform. It enables teams to upload diverse datasets, perform multi-step data transformations (joins, formulas, aggregations, cleaning), query in natural language using Groq-powered LLMs, and generate executive dashboards, interactive charts, and predictive analytics — wrapped in a modern design system.
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
+[![DuckDB](https://img.shields.io/badge/DuckDB-OLAP%20Engine-FFF000.svg?style=flat&logo=duckdb)](https://duckdb.org)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=react)](https://react.dev)
+[![Vite](https://img.shields.io/badge/Vite-7-646CFF.svg?style=flat&logo=vite)](https://vitejs.dev)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg?style=flat&logo=python)](https://python.org)
+[![SQLGlot](https://img.shields.io/badge/Security-SQLGlot%20AST-4CAF50.svg?style=flat)](https://github.com/tobymao/sqlglot)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
-
-## Key Capabilities
-
-- **Modern Senior-Grade UI / UX**:
-  - Clean, distraction-free aesthetic with refined typography (Inter / Geist), curated slate color palettes, and polished dark/light themes.
-  - Responsive layout with collapsible sidebar, mobile drawer, and high-density tabular views.
-
-- **Stateless DuckDB OLAP Engine**:
-  - Vectorized SQL ingestion and query execution via **DuckDB** and **PyArrow**.
-  - Direct conversion of CSV, TSV, JSON, and Parquet uploads into high-performance compressed **Parquet (`.parquet`)** storage.
-  - Non-blocking execution running heavy OLAP queries inside worker thread pools (`ThreadPoolExecutor`).
-
-- **Data Transformation Studio (Power Query)**:
-  - **Multi-Dataset Joins**: Merge two datasets using Inner, Left, Right, or Full Outer joins with custom key matching.
-  - **Calculated Columns**: Create arithmetic formulas (`+`, `-`, `×`, `÷`) between columns or with constant scalar values.
-  - **Group & Aggregate**: Pivot datasets by dimension with `SUM`, `AVERAGE`, `COUNT`, `MIN`, and `MAX`.
-  - **Clean & Impute Missing Data**: Fill N/A values via Zero, Mean, Median, Mode, or Forward Fill.
-  - **Row Filtering**: Filter datasets with conditional operators (`==`, `!=`, `>`, `<`, `contains`).
-  - **Pipeline History**: Visual applied steps audit trail tracking every transformation.
-  - **Workspace Sync**: One-click sync to update all active workspace pages with transformed data.
-  - **Multi-Format Export**: Download transformed datasets as **CSV**, **Excel (`.xlsx`)**, or **JSON**.
-
-- **Multi-Format Data Ingestion**:
-  - Native support for **CSV**, **Excel (`.xlsx`, `.xls`)**, **JSON**, **TSV**, and **Parquet (`.parquet`)**.
-  - Automatic column profiling, schema inference, and data type detection.
-
-- **Conversational Analytics (Ask AI)**:
-  - Translate plain English questions into validated, read-only SQL queries via Groq LLMs.
-  - Multi-turn chat history with fast rerun and prompt suggestions.
-  - Dynamic fallback model routing (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, etc.).
-  - Automated statistical summaries, insights, and Scikit-Learn linear regression predictions.
-
-- **Executive Dashboard & Auto-Visualizer**:
-  - Instant high-level KPI cards: total rows, column profiling, and missing value rates.
-  - AI-driven chart recommendations based on dataset distribution and heuristics.
-  - Export entire dashboards to **PDF**, **PNG**, or standalone **HTML** reports.
-
-- **Drag-and-Drop Visual Builder**:
-  - Build custom visualizations by selecting dimensions, metrics, chart types (Bar, Line, Area, Scatter, Pie), and aggregations.
-  - Save custom charts directly to your active dashboard.
-
-- **Interactive Knowledge Graph**:
-  - Visual force-directed network diagram displaying relationships and correlations between data entities.
-  - Click any node to profile columns, execute context-aware queries, or filter table data.
-
-- **Data Browser with AI Search**:
-  - High-performance data table with column profiling modals (min, max, mean, unique values, missing rate).
-  - Natural language search & filter bar.
-
-- **Multi-User Authentication & Security**:
-  - JWT token authentication with native `bcrypt` password hashing.
-  - In-app AI settings modal to configure Groq API keys and select models dynamically.
+InsightAI is an enterprise-grade, conversational business intelligence, data engineering, and predictive analytics platform. It empowers data teams and business stakeholders to upload diverse datasets, execute multi-step vectorized data transformations (Power Query backend), query datasets in plain English using LLM Text-to-SQL, and interact with real-time executive dashboards, force-directed knowledge graphs, and predictive forecasting models.
 
 ---
 
 ## Architecture Overview
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   React 19 Frontend                    │
-│      (Vite 7, TailwindCSS v4, Phosphor Icons, Recharts)│
-└───────────────┬────────────────────────────────────────┘
-                │ HTTP / REST & JWT Auth
-                ▼
-┌────────────────────────────────────────────────────────┐
-│             Python FastAPI Microservice (8000)         │
-│   • Auth & Session Management (PyJWT & native bcrypt) │
-│   • Stateless File Ingestion & Parquet Converter       │
-│   • Vectorized DuckDB OLAP Query Engine                │
-│   • Text-to-SQL & NL Insights (Groq SDK)               │
-│   • Auto-Visualization Engine & Predictions            │
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                              React 19 Frontend                                 │
+│        (Vite 7, TailwindCSS v4, Phosphor Icons, Recharts, Network Graphs)       │
+└───────────────────────┬─────────────────────────────────┬──────────────────────┘
+                        │ HTTP / REST                     │ JWT Bearer Auth
+                        ▼                                 ▼
+┌────────────────────────────────────────┐ ┌────────────────────────────────────┐
+│      Express Gateway (Port 5000)       │ │ Python FastAPI Service (Port 8000) │
+│  • Multi-user session persistence      │ │  • Phase 1: DuckDB OLAP & Auth     │
+│  • Static distribution proxy           │ │  • Phase 2: NL Text-to-SQL & AST   │
+│  • Uploads file-stream gateway         │ │  • Phase 3: Power Query CTE Engine │
+└────────────────────────────────────────┘ └─────────────────┬──────────────────┘
+                                                             │
+                                   ┌─────────────────────────┴────────────────────────┐
+                                   │                                                  │
+                                   ▼                                                  ▼
+                    ┌───────────────────────────────┐                  ┌───────────────────────────────┐
+                    │     DuckDB OLAP Engine        │                  │      Groq LLM Service         │
+                    │ • Stateless CTE Chaining      │                  │ • Text-to-SQL Translation     │
+                    │ • Snappy Parquet Storage      │                  │ • Dynamic Schema Injection    │
+                    │ • Native Zero-Pandas Engine   │                  │ • SQLGlot AST Safety Guard    │
+                    └───────────────────────────────┘                  └───────────────────────────────┘
 ```
+
+---
+
+## Core Capabilities & Engineering Phases
+
+### Phase 1: Stateless DuckDB OLAP Engine & Authentication
+- **Vectorized Parquet Storage**: Converts raw CSV, TSV, JSON, and Excel (`.xlsx`, `.xls`) uploads directly into high-efficiency, compressed **Parquet (`.parquet`)** files with PyArrow.
+- **Non-Blocking Query Execution**: Offloads heavy analytical SQL queries to CPU worker thread pools (`ThreadPoolExecutor`), eliminating event loop starvation.
+- **JWT Authentication & Native Bcrypt**: Secure user registration, authentication, and session inspection with signed JWT access tokens.
+- **Stateless Column Profiling**: Computes exact row counts, distinct values, null distributions, data types, and sample previews directly from Parquet metadata.
+
+### Phase 2: Conversational Analytics & AST Security Validator
+- **Natural Language to SQL (`POST /api/ask`)**: Translates plain-English business questions into executable DuckDB SQL queries via Groq LLMs (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`).
+- **Dynamic Schema Context Injection**: Automatically introspects active dataset schema, column types, and sample data values to ground LLM query generation in precise facts.
+- **SQLGlot AST Security Firewall**: Parses and walks the Abstract Syntax Tree (AST) of generated SQL queries to guarantee **read-only `SELECT`/`WITH` operations**. Blocks all destructive DDL/DML mutations (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, `PRAGMA`, multi-statement semicolons).
+- **Statistical Summaries & Predictive Forecasting**: Automated linear regression and statistical trend analysis.
+
+### Phase 3: Vectorized Data Transformation Engine (Power Query Backend)
+- **Zero Pandas in Transformations**: All transformations are compiled directly into native DuckDB SQL. No in-memory dataframe bottlenecks.
+- **CTE Chaining Architecture**: Converts JSON transformation audit trails into chained Common Table Expressions (`WITH step_0 AS (...), step_1 AS (...)... SELECT * FROM step_n`).
+- **Comprehensive Transformation Operations**:
+  - **Filter**: Compiles to parameterized/escaped `WHERE` clauses (`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `not_contains`, `starts_with`, `ends_with`, `is_null`, `is_not_null`, `in`, `not_in`, `between`).
+  - **Calculate (Formulas)**: Compiles structured arithmetic (`+`, `-`, `*`, `/`, `%`, `^`) with **built-in divide-by-zero protection** (`CASE WHEN col = 0 THEN 0 ELSE ... END`) and validated custom SQL expressions.
+  - **Aggregate (Group By & Pivot)**: Compiles `GROUP BY` with `SUM`, `AVG`, `MEAN`, `COUNT`, `COUNT_DISTINCT`, `MIN`, `MAX`, `MEDIAN`, `MODE`, `STDDEV`, `VARIANCE`.
+  - **Impute (Missing Data Cleaning)**: Compiles `COALESCE` and DuckDB `EXCLUDE (...)` window functions for `zero`, `mean`, `median`, `mode`, `ffill` (forward fill), `bfill` (backward fill), and `custom` scalar replacements.
+  - **Join (Multi-Dataset Merge)**: Compiles `INNER`, `LEFT`, `RIGHT`, and `FULL OUTER` joins between multiple Parquet datasets with single or multi-column keys.
+  - **Structural Operations**: `Rename` (DuckDB `RENAME`), `Sort` (`ORDER BY ASC/DESC`), `Drop Duplicates` (`DISTINCT ON`), `Select Columns`, `Drop Columns` (`EXCLUDE`).
+- **Stateless Pipeline Preview (`POST /api/transform/preview`)**: Fast interactive preview for UI with configurable row limit (default: 100).
+- **Physical Parquet Materialization (`POST /api/transform/commit`)**: Persists the transformed dataset into a newly minted, compressed `.parquet` file using DuckDB native `COPY (...) TO ... (FORMAT PARQUET)`.
+
+---
+
+## API Reference
+
+### Transformation Engine Endpoints (Phase 3)
+
+| Method | Route | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/transform/preview` | Compiles pipeline JSON into CTE SQL and returns preview rows & metadata | Optional |
+| `POST` | `/api/transform/commit` | Materializes pipeline into a new `.parquet` file and returns schema | Optional |
+| `POST` | `/api/transform/compile` | Returns compiled CTE SQL string and step summary without execution | Optional |
+
+#### Sample Pipeline Request Payload (`POST /api/transform/preview`):
+```json
+{
+  "parquet_path": "storage/parquet/retail_sales.parquet",
+  "steps": [
+    {
+      "type": "impute",
+      "column": "discount",
+      "strategy": "zero"
+    },
+    {
+      "type": "calculate",
+      "new_column": "gross_revenue",
+      "col1": "price",
+      "op": "*",
+      "col2": "quantity"
+    },
+    {
+      "type": "calculate",
+      "new_column": "net_revenue",
+      "col1": "gross_revenue",
+      "op": "-",
+      "col2": "discount"
+    },
+    {
+      "type": "filter",
+      "column": "net_revenue",
+      "operator": ">=",
+      "value": 100.0
+    },
+    {
+      "type": "aggregate",
+      "group_by": ["category", "region"],
+      "aggregations": [
+        { "column": "net_revenue", "func": "sum", "alias": "total_revenue" },
+        { "column": "*", "func": "count", "alias": "order_count" }
+      ]
+    },
+    {
+      "type": "sort",
+      "by": ["total_revenue"],
+      "ascending": false
+    }
+  ],
+  "limit": 100
+}
+```
+
+### Conversational Analytics & Ask AI Endpoints (Phase 2)
+
+| Method | Route | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/ask` | Translates natural language question to SQL, validates AST, executes on DuckDB | Optional |
+
+### Core Engine & Ingestion Endpoints (Phase 1)
+
+| Method | Route | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/signup` | Register new user account | No |
+| `POST` | `/api/v1/auth/login` | Authenticate & receive JWT access token | No |
+| `GET` | `/api/v1/auth/me` | Retrieve current authenticated user profile | Yes |
+| `POST` | `/api/v1/datasets/ingest` | Stateless file ingestion directly into compressed Parquet storage | Yes |
+| `POST` | `/api/v1/datasets/query` | Execute safe vectorized DuckDB SQL queries with row limits | Yes |
+| `GET` | `/api/v1/datasets/{id}/schema` | Inspect dataset schema, column profiling & sample preview | Yes |
+| `GET` | `/health` | Service health probe & engine version info | No |
 
 ---
 
@@ -83,7 +152,7 @@ InsightAI is an enterprise-grade, conversational business intelligence and data 
 
 ```
 .
-├── frontend/                     # React + Vite application
+├── frontend/                     # React 19 + Vite 7 Application
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── AuthPage.jsx                # Login / Registration page
@@ -109,31 +178,54 @@ InsightAI is an enterprise-grade, conversational business intelligence and data 
 │   ├── package.json
 │   └── vite.config.js
 │
-├── python-service/               # Consolidated FastAPI Analytics & Auth Microservice
+├── python-service/               # FastAPI Analytics, Transformation & DuckDB Microservice
 │   ├── app/
-│   │   ├── api/                  # API Routers
-│   │   │   ├── v1/               # Version 1 endpoints (/auth & /datasets)
-│   │   │   │   ├── auth.py       # Login, Signup & User profile endpoints
-│   │   │   │   └── datasets.py   # Ingest, query & schema inspection endpoints
-│   │   │   └── router.py         # Main API router aggregator
-│   │   ├── core/                 # Core Infrastructure
-│   │   │   ├── config.py         # Pydantic BaseSettings, storage paths & limits
-│   │   │   ├── deps.py           # Authentication & DB FastAPI dependencies
-│   │   │   └── security.py       # Native Bcrypt hashing & PyJWT token handling
-│   │   ├── db/                   # Database session management for metadata/auth
-│   │   ├── models/               # SQLAlchemy models (User entity)
-│   │   ├── schemas/              # Pydantic schemas (Auth & Datasets)
-│   │   ├── services/             # Core Services
-│   │   │   ├── auth_service.py   # Signup & login business logic
-│   │   │   └── duckdb_engine.py  # Stateless vectorized DuckDB OLAP engine
-│   │   └── main.py               # Main FastAPI app entrypoint & middlewares
-│   ├── main.py                   # Root microservice launcher wrapper
-│   ├── requirements.txt          # Production backend dependencies
-│   ├── test_phase1.py            # Automated architecture test suite
-│   └── .env                      # Python service environment variables
+│   │   ├── api/
+│   │   │   ├── routes/
+│   │   │   │   ├── analytics.py            # POST /api/ask natural language SQL endpoint
+│   │   │   │   └── transform.py            # POST /api/transform preview, commit, compile
+│   │   │   ├── v1/
+│   │   │   │   ├── auth.py                 # JWT Signup & Login endpoints
+│   │   │   │   └── datasets.py             # Parquet Ingestion, Query & Schema endpoints
+│   │   │   ├── legacy.py                   # Legacy SQLite / BI proxy compatibility routes
+│   │   │   └── router.py                   # API router aggregator
+│   │   ├── core/
+│   │   │   ├── config.py                   # Pydantic Settings, memory limits & paths
+│   │   │   ├── deps.py                     # Auth & Database dependency injectors
+│   │   │   └── security.py                 # Native Bcrypt hashing & PyJWT token handling
+│   │   ├── db/
+│   │   │   └── session.py                  # Metadata database engine & sessionmaker
+│   │   ├── models/
+│   │   │   ├── transform.py                # Pydantic Discriminated Union Step Models
+│   │   │   └── user.py                     # SQLAlchemy User entity
+│   │   ├── schemas/
+│   │   │   ├── auth.py                     # Auth request & response schemas
+│   │   │   ├── dataset.py                  # Dataset schema, ColumnInfo & QueryResult
+│   │   │   └── transform.py                # Transformation schemas alias
+│   │   ├── services/
+│   │   │   ├── auth_service.py             # Auth business logic
+│   │   │   ├── duckdb_engine.py            # Vectorized stateless DuckDB OLAP engine
+│   │   │   ├── llm_service.py              # Groq Text-to-SQL & Context Formatter
+│   │   │   ├── sql_validator.py            # SQLGlot AST read-only security validator
+│   │   │   └── transformation_compiler.py  # CTE Chaining Power Query Compiler
+│   │   └── main.py                         # FastAPI application entrypoint
+│   ├── storage/
+│   │   ├── parquet/                        # Compressed Parquet dataset storage
+│   │   └── uploads/                        # Temporary streaming upload buffers
+│   ├── test_phase1.py                      # Phase 1 test suite (Auth, DuckDB Ingest/Query)
+│   ├── test_phase2.py                      # Phase 2 test suite (SQLGlot AST, LLM Text-to-SQL)
+│   ├── test_phase3.py                      # Phase 3 test suite (CTE Chaining, Power Query)
+│   ├── test_master_suite.py                # Comprehensive Master Architecture Test Suite
+│   ├── requirements.txt                    # Production backend dependencies
+│   └── main.py                             # Root microservice launcher wrapper
 │
-├── sample_data/
-│   └── sales_data.csv            # Sample dataset for testing
+├── server/                       # Node.js / Express Gateway & Session Proxy
+│   ├── index.js                  # Express routing, multer streaming & user session map
+│   ├── package.json
+│   └── users.json                # User storage fallback
+│
+├── sample_data/                  # Sample datasets for demonstration
+│   └── sales_data.csv
 └── README.md
 ```
 
@@ -142,101 +234,102 @@ InsightAI is an enterprise-grade, conversational business intelligence and data 
 ## Getting Started
 
 ### Prerequisites
-- **Python** 3.11+ with `pip`
+- **Python** 3.11+
 - **Node.js** 18+ and `npm`
-- **Groq API Key** (Free tier available at [consolegroq.com](https://console.groq.com))
+- **Groq API Key** (Free tier available at [console.groq.com](https://console.groq.com))
 
 ---
 
-### Step 1: Configure & Start Python Service (Port 8000)
+### Step 1: Start the Python Backend Service (Port 8000)
 
-1. Navigate to `python-service`:
-   ```powershell
+1. Open a terminal and navigate to `python-service`:
+   ```bash
    cd python-service
    ```
 
-2. Activate virtual environment (or create one):
+2. Activate virtual environment:
    ```powershell
    # Windows PowerShell:
    .\.venv\Scripts\Activate.ps1
-   
+
    # macOS/Linux:
    source .venv/bin/activate
    ```
 
-3. Install dependencies:
+3. Install backend dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Create or edit `python-service/.env`:
+4. Configure environment variables in `python-service/.env`:
    ```ini
    SECRET_KEY=insightai_super_secret_jwt_key_2026!
    GROQ_API_KEY=gsk_your_groq_api_key_here
    GROQ_MODEL=openai/gpt-oss-120b
+   DUCKDB_MEMORY_LIMIT=2GB
+   DUCKDB_THREADS=4
    ```
 
-5. Start the microservice:
+5. Launch the microservice:
    ```bash
    python main.py
    ```
-   > Server runs at `http://localhost:8000`. Interactive API Docs available at `http://localhost:8000/api/v1/docs`.
+   > FastAPI service runs at `http://localhost:8000`. Interactive API Docs are available at `http://localhost:8000/api/v1/docs`.
 
 ---
 
-### Step 2: Start React Frontend (Port 5173)
+### Step 2: Start Express Gateway (Port 5000)
+
+1. Open a new terminal tab and navigate to `server`:
+   ```bash
+   cd server
+   npm install
+   npm run dev
+   ```
+   > Express server runs at `http://localhost:5000`.
+
+---
+
+### Step 3: Start React Frontend (Port 5173)
 
 1. Open a new terminal tab and navigate to `frontend`:
    ```bash
    cd frontend
    npm install
-   ```
-
-2. Start the dev server:
-   ```bash
    npm run dev
    ```
-
-3. Open [http://localhost:5173](http://localhost:5173) in your browser.
-
----
-
-## API Reference
-
-### Microservice Endpoints (`http://localhost:8000`)
-
-| Method | Route | Description | Auth Required |
-|---|---|---|---|
-| `POST` | `/api/v1/auth/signup` | Register new user account | No |
-| `POST` | `/api/v1/auth/login` | Authenticate & receive JWT access token | No |
-| `GET` | `/api/v1/auth/me` | Retrieve active user profile | Yes |
-| `POST` | `/api/v1/datasets/ingest` | Statelessly ingest file to Parquet format | Yes |
-| `POST` | `/api/v1/datasets/query` | Execute non-blocking vectorized DuckDB SQL | Yes |
-| `GET` | `/api/v1/datasets/{id}/schema` | Inspect dataset schema and preview rows | Yes |
-| `GET` | `/health` | Service health status & probe | No |
+   > Frontend runs at `http://localhost:5173`.
 
 ---
 
-## Security & Reliability Guardrails
+## Testing & Quality Assurance
 
-- **SQL Sanitization**: All natural language queries are restricted to strict `SELECT` statements. Destructive operations (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`) are blocked by AST regex validation.
-- **Stateless Concurrency**: Heavy DuckDB queries run statelessly inside worker thread pools (`ThreadPoolExecutor`), keeping the FastAPI event loop responsive under high load.
-- **JWT Protection**: Protected endpoints enforce Bearer token verification via `HTTPBearer` dependencies.
+Run any of the automated test suites in `python-service`:
 
----
+```powershell
+# Run Master Comprehensive Architecture & Edge Case Suite (Phase 1, 2, 3)
+python test_master_suite.py
 
-## Tech Stack Summary
+# Run Phase 3 Transformation Engine Test Suite
+python test_phase3.py
 
-| Area | Technologies |
-|---|---|
-| **Frontend** | React 19, Vite 7, TailwindCSS v4, Phosphor Icons, Recharts |
-| **Backend Service** | Python 3.11+, FastAPI, Uvicorn, Pydantic v2, SQLAlchemy |
-| **OLAP Engine** | DuckDB, PyArrow (Vectorized SQL Execution) |
-| **Auth & Security** | PyJWT, native Bcrypt password hashing |
-| **AI / LLM** | Groq SDK (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, etc.) |
+# Run Phase 2 Text-to-SQL & AST Security Test Suite
+python test_phase2.py
+
+# Run Phase 1 Auth & DuckDB Ingestion Test Suite
+python test_phase1.py
+```
+
+### Test Coverage Highlights
+- ✅ **CTE Chaining**: Generates valid, chained SQL `WITH step_0 AS (...), step_1 AS (...) SELECT * FROM step_n`.
+- ✅ **AST Security**: Blocks 100% of malicious DDL/DML injection attacks (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, semicolons).
+- ✅ **Operator Precision**: 14+ comparison, pattern-matching (`ILIKE`), and null-check operators verified.
+- ✅ **Divide-by-Zero Protection**: Arithmetic compilation automatically injects `CASE WHEN ... = 0 THEN 0` guards.
+- ✅ **Imputation Integrity**: Evaluated mean, median, mode, zero, custom values, and forward/backward fill window functions.
+- ✅ **Physical Materialization**: Direct Parquet writing via DuckDB `COPY (...) TO (FORMAT PARQUET)` without in-memory dataframe copies.
 
 ---
 
 ## License
 
-MIT License. Built for enterprise data intelligence and modern BI workflows.
+MIT License. Built for scalable enterprise data intelligence, modern BI workflows, and vectorized analytical transformations.

@@ -286,3 +286,89 @@ class DuckDBEngine:
             dataset_id,
             parquet_path,
         )
+
+    @classmethod
+    def _sync_materialize_query_to_parquet(
+        cls,
+        sql_query: str,
+        output_parquet_path: Path,
+        parquet_path: Optional[Path] = None,
+        table_name: str = "dataset",
+    ) -> Dict[str, Any]:
+        """Materialize a SQL query directly to a Parquet file without converting to intermediate Pandas dataframes."""
+        start_time = time.perf_counter()
+        conn = cls._create_ephemeral_connection()
+        try:
+            if parquet_path and parquet_path.exists():
+                conn.execute(
+                    f"CREATE VIEW {table_name} AS SELECT * FROM read_parquet('{parquet_path.as_posix()}')"
+                )
+
+            cleaned_sql = sql_query.strip().rstrip(";")
+            copy_stmt = (
+                f"COPY ({cleaned_sql}) TO '{output_parquet_path.as_posix()}' "
+                f"(FORMAT PARQUET, COMPRESSION 'SNAPPY')"
+            )
+            conn.execute(copy_stmt)
+
+            count_res = conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{output_parquet_path.as_posix()}')"
+            ).fetchone()
+            total_rows = count_res[0] if count_res else 0
+
+            describe_res = conn.execute(
+                f"DESCRIBE SELECT * FROM read_parquet('{output_parquet_path.as_posix()}')"
+            ).fetchall()
+
+            columns_info: List[ColumnInfo] = []
+            for col in describe_res:
+                col_name = str(col[0])
+                col_type = str(col[1])
+                nullable = str(col[2]).upper() == "YES"
+
+                sample_res = conn.execute(
+                    f"SELECT DISTINCT \"{col_name}\" FROM read_parquet('{output_parquet_path.as_posix()}') "
+                    f"WHERE \"{col_name}\" IS NOT NULL LIMIT 3"
+                ).fetchall()
+                samples = [cls._serialize_value(r[0]) for r in sample_res]
+
+                columns_info.append(
+                    ColumnInfo(
+                        name=col_name,
+                        data_type=col_type,
+                        nullable=nullable,
+                        sample_values=samples,
+                    )
+                )
+
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+            return {
+                "parquet_path": str(output_parquet_path),
+                "total_rows": total_rows,
+                "total_columns": len(columns_info),
+                "columns": columns_info,
+                "execution_time_ms": round(elapsed_ms, 2),
+            }
+        finally:
+            conn.close()
+
+    @classmethod
+    async def materialize_query_to_parquet(
+        cls,
+        sql_query: str,
+        output_parquet_path: Path,
+        parquet_path: Optional[Path] = None,
+        table_name: str = "dataset",
+    ) -> Dict[str, Any]:
+        """Asynchronously materialize a SQL query to Parquet in the worker thread pool."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _thread_pool,
+            cls._sync_materialize_query_to_parquet,
+            sql_query,
+            output_parquet_path,
+            parquet_path,
+            table_name,
+        )
+
