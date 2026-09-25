@@ -45,3 +45,32 @@ python-service/__pycache__/
 # Desktop build outputs
 dist-desktop/
 *.spec
+
+# ── model/ folder ──────────────────────────────────────────────────────────
+# Never commit the Python virtual environment
+model/.venv/
+
+# Training checkpoints (intermediate saves, large)
+model/adapter/checkpoint-*/
+
+# Spider training datasets (multi-GB, download separately)
+model/spider_databases/
+model/spider_databases_tmp/
+model/spider_raw/
+model/train.jsonl
+model/val.jsonl
+
+# Other training output folders (keep only model/adapter/)
+model/output/
+model/output-1.5b-qlora/
+model/output-1.5b-qlora-v2/
+model/output-1.5b-qlora-v3/
+
+# Eval result JSON files (auto-generated)
+model/eval_results_*.json
+
+# Misc research notes / chat logs
+model/CHAT_HISTORY.md
+model/Claude_Chat_*.md
+model/PAPER_OUTLINE.md
+model/project_overview.md

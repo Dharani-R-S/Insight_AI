@@ -206,7 +206,6 @@ export default function App() {
   };
 
   const handleCreateVisualization = (recommendation) => {
-    console.log('Creating visualization:', recommendation);
     setSelectedRecommendation(recommendation);
     setActivePage('visualize');
   };

@@ -51,9 +51,11 @@ export default function ResultsPanel({
   const { sql_query, table_result, chart_base64, stats, insights, prediction } = results || {};
 
   // Determine if chart can be rendered from table_result
-  const canAutoChart = table_result && table_result.length > 0 &&
+  const canAutoChart = !!(table_result &&
+    table_result.length > 0 &&
+    table_result[0] &&
     Object.keys(table_result[0]).length >= 2 &&
-    Object.keys(table_result[0]).slice(1).some(k => !isNaN(Number(table_result[0][k])));
+    Object.keys(table_result[0]).slice(1).some(k => !isNaN(Number(table_result[0][k]))));
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-primary)] select-none">
@@ -131,7 +133,7 @@ export default function ResultsPanel({
 
             {activeTab === 'table' && (
               <div className="h-full">
-                <DataTable data={table_result} />
+                <DataTable data={table_result?.length ? table_result : fullData} />
               </div>
             )}
 
