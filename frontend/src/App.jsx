@@ -210,8 +210,16 @@ export default function App() {
     setActivePage('visualize');
   };
 
-  const handleFilterTableFromGraph = async (col, val) => {
-    const query = `show records where ${col} is '${val}'`;
+  const handleFilterTableFromGraph = async (col, val, customQuery) => {
+    let query = '';
+    if (customQuery) {
+      query = customQuery;
+    } else if (typeof col === 'string' && (!val || col.toLowerCase().startsWith('show '))) {
+      query = col;
+    } else if (col && val) {
+      query = `show records where ${col} is '${val}'`;
+    }
+    if (!query) return;
     setNlFilterInput(query);
     setActivePage('data');
     setIsFilteringNL(true);

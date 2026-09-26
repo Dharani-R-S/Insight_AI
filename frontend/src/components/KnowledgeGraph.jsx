@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { 
   ShareNetwork, 
   MagnifyingGlass, 
   Play, 
+  Pause,
   Sparkle,
   Sliders,
   X,
@@ -12,7 +13,12 @@ import {
   Intersect,
   Table,
   ChartBar,
-  Info
+  Info,
+  WarningCircle,
+  Funnel,
+  GitFork,
+  Compass,
+  ArrowRight
 } from '@phosphor-icons/react';
 
 export default function KnowledgeGraph({ 
@@ -27,33 +33,45 @@ export default function KnowledgeGraph({
   const [selectedNode, setSelectedNode] = useState(null);
   const [secondNode, setSecondNode] = useState(null);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const [hoveredEdge, setHoveredEdge] = useState(null);
+  const [selectedEdge, setSelectedEdge] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'vector'
   const [sizeMode, setSizeMode] = useState('count'); // 'count' | 'value'
   const [isPhysicsActive, setIsPhysicsActive] = useState(true);
-  const [showIntelPanel, setShowIntelPanel] = useState(true);
+  const [activeSidePanel, setActiveSidePanel] = useState('intel'); // 'intel' | 'inspector' | 'paths' | null
+  const [activePathIndex, setActivePathIndex] = useState(0);
 
   // Dragging state
   const draggingNodeRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
-  // Identify primary numeric metric column for value-based sizing
+  // Identify primary numeric metric column for value-based sizing and driver analytics
   const numericMetricCol = useMemo(() => {
     if (!tableData || tableData.length === 0) return null;
     const cols = columns || Object.keys(tableData[0]);
     return cols.find((c) => {
       const name = c.toLowerCase();
       return (
-        (name.includes('sales') || name.includes('amount') || name.includes('revenue') || name.includes('price') || name.includes('cost')) &&
+        (name.includes('sales') || name.includes('amount') || name.includes('revenue') || name.includes('price') || name.includes('cost') || name.includes('profit')) &&
         typeof tableData[0][c] === 'number'
       );
     }) || cols.find((c) => typeof tableData[0][c] === 'number');
   }, [tableData, columns]);
 
   // Generate Graph Nodes and Edges from dataset schema and data
-  const { nodes, edges, hubStats, topPairs, relationshipPairs } = useMemo(() => {
+  const { nodes, edges, hubStats, topPairs, relationshipPairs, anomalySignals, driverSignals, adjacencyMap } = useMemo(() => {
     if (!tableData || tableData.length === 0) {
-      return { nodes: [], edges: [], hubStats: [], topPairs: [], relationshipPairs: [] };
+      return { 
+        nodes: [], 
+        edges: [], 
+        hubStats: [], 
+        topPairs: [], 
+        relationshipPairs: [], 
+        anomalySignals: [], 
+        driverSignals: [],
+        adjacencyMap: new Map()
+      };
     }
 
     const cols = columns && columns.length > 0 ? columns : Object.keys(tableData[0]);
@@ -65,6 +83,7 @@ export default function KnowledgeGraph({
     const pairs = [];
     const valueNodeMap = new Map();
     const categoricalColumns = [];
+    const nodeLookup = new Map();
 
     // 1. Root Node
     const rootNode = {
@@ -85,6 +104,7 @@ export default function KnowledgeGraph({
       },
     };
     generatedNodes.push(rootNode);
+    nodeLookup.set('root', rootNode);
 
     // 2. Column Nodes (Radial Distribution)
     cols.forEach((col, idx) => {
@@ -116,16 +136,18 @@ export default function KnowledgeGraph({
         parent: 'root',
         details: {
           column: col,
-          type: isNum ? 'Numeric Field' : 'Categorical Dimension',
+          type: isNum ? 'Numeric Metric Hub' : 'Categorical Dimension',
           sample: sampleVal != null ? String(sampleVal) : 'N/A',
           totalSum: isNum ? totalValSum.toLocaleString() : null,
         },
       };
       generatedNodes.push(colNode);
+      nodeLookup.set(colId, colNode);
 
       if (!isNum) categoricalColumns.push(col);
 
       generatedEdges.push({
+        id: `root--${colId}`,
         source: 'root',
         target: colId,
         weight: 1.5,
@@ -149,10 +171,10 @@ export default function KnowledgeGraph({
 
         const sortedVals = Object.entries(valCounts)
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 4);
+          .slice(0, 5);
 
         sortedVals.forEach(([valName, count], valIdx) => {
-          const valAngle = angle + (valIdx - 1.5) * 0.3;
+          const valAngle = angle + (valIdx - 2) * 0.25;
           const valDistance = distance + 95;
           const valId = `val-${col}-${valName}`;
           const metricSum = valSums[valName] || 0;
@@ -161,14 +183,14 @@ export default function KnowledgeGraph({
           // Compute Radius based on sizeMode
           let computedRadius = 10;
           if (sizeMode === 'count') {
-            computedRadius = 8 + Math.min(12, (count / tableData.length) * 20);
+            computedRadius = 8 + Math.min(14, (count / tableData.length) * 22);
           } else if (sizeMode === 'value' && metricSum > 0) {
-            computedRadius = 8 + Math.min(14, Math.sqrt(metricSum) * 0.05);
+            computedRadius = 8 + Math.min(16, Math.sqrt(metricSum) * 0.06);
           }
 
           const valNode = {
             id: valId,
-            label: valName.length > 14 ? `${valName.slice(0, 14)}…` : valName,
+            label: valName.length > 15 ? `${valName.slice(0, 15)}…` : valName,
             fullLabel: valName,
             type: 'value',
             column: col,
@@ -190,8 +212,10 @@ export default function KnowledgeGraph({
             },
           };
           generatedNodes.push(valNode);
+          nodeLookup.set(valId, valNode);
 
           generatedEdges.push({
+            id: `${colId}--${valId}`,
             source: colId,
             target: valId,
             weight: 1.0,
@@ -209,13 +233,12 @@ export default function KnowledgeGraph({
       hubs.push({
         name: col,
         type: isNum ? 'Numeric' : 'Categorical',
-        connections: isNum ? uniqueCount : uniqueCount,
+        connections: uniqueCount,
         coverage: `${((nonEmpty / tableData.length) * 100).toFixed(0)}% filled`,
       });
     });
 
-    // Add evidence links between values that occur in the same records. These are the
-    // useful relationships that turn the graph from a schema map into an exploration tool.
+    // Cross-column co-occurrences and evidence links
     const linkCandidates = [];
     for (let i = 0; i < categoricalColumns.length; i += 1) {
       for (let j = i + 1; j < categoricalColumns.length; j += 1) {
@@ -231,8 +254,13 @@ export default function KnowledgeGraph({
           const target = valueNodeMap.get(`${colB}::${valueB}`);
           if (!source || !target) return;
           const key = `${source}__${target}`;
-          counts[key] = counts[key] || { source, target, colA, colB, valueA, valueB, count: 0 };
+          if (!counts[key]) {
+            counts[key] = { source, target, colA, colB, valueA, valueB, count: 0, metricTotal: 0 };
+          }
           counts[key].count += 1;
+          if (numericMetricCol && Number.isFinite(Number(row[numericMetricCol]))) {
+            counts[key].metricTotal += Number(row[numericMetricCol]);
+          }
         });
 
         linkCandidates.push(...Object.values(counts));
@@ -241,24 +269,84 @@ export default function KnowledgeGraph({
 
     linkCandidates
       .sort((a, b) => b.count - a.count)
-      .slice(0, 14)
+      .slice(0, 20)
       .forEach((link) => {
         generatedEdges.push({
+          id: `${link.source}--${link.target}`,
           source: link.source,
           target: link.target,
-          weight: 1 + Math.min(2, link.count / Math.max(1, tableData.length) * 8),
+          weight: 1.2 + Math.min(2.5, (link.count / Math.max(1, tableData.length)) * 8),
           color: 'rgba(52, 211, 153, 0.55)',
           relationship: true,
+          colA: link.colA,
+          colB: link.colB,
+          valueA: link.valueA,
+          valueB: link.valueB,
+          count: link.count,
+          share: `${((link.count / tableData.length) * 100).toFixed(1)}%`,
+          metricTotal: link.metricTotal
         });
       });
 
     const relationshipPairs = linkCandidates
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
+      .slice(0, 6)
       .map((link) => ({
         ...link,
         share: `${((link.count / tableData.length) * 100).toFixed(1)}%`,
       }));
+
+    // Build Graph Adjacency Map for Fast Multi-Hop Path Finding
+    const adjMap = new Map();
+    generatedNodes.forEach((n) => adjMap.set(n.id, []));
+    generatedEdges.forEach((e) => {
+      if (adjMap.has(e.source)) adjMap.get(e.source).push({ target: e.target, edge: e });
+      if (adjMap.has(e.target)) adjMap.get(e.target).push({ target: e.source, edge: e });
+    });
+
+    // 4. Discover Anomaly & Risk Signals
+    const anomalies = [];
+    linkCandidates.forEach((link) => {
+      const valANode = nodeLookup.get(link.source);
+      if (valANode && valANode.details?.frequency) {
+        const concentrationInA = link.count / valANode.details.frequency;
+        if (concentrationInA >= 0.70 && valANode.details.frequency >= Math.min(5, Math.ceil(tableData.length * 0.05))) {
+          anomalies.push({
+            type: 'bottleneck',
+            title: `High Concentration: ${link.valueA} ➔ ${link.valueB}`,
+            desc: `${(concentrationInA * 100).toFixed(0)}% of records with ${link.colA}='${link.valueA}' are exclusively paired with ${link.colB}='${link.valueB}'.`,
+            colA: link.colA,
+            valA: link.valueA,
+            colB: link.colB,
+            valB: link.valueB,
+            severity: concentrationInA > 0.85 ? 'high' : 'medium'
+          });
+        }
+      }
+    });
+
+    // 5. Discover Driver Signals (Revenue & Volume Drivers)
+    const drivers = [];
+    if (numericMetricCol) {
+      const topMetricPairs = [...linkCandidates]
+        .filter((l) => l.metricTotal > 0)
+        .sort((a, b) => b.metricTotal - a.metricTotal)
+        .slice(0, 4);
+
+      topMetricPairs.forEach((pair) => {
+        drivers.push({
+          type: 'metric_leader',
+          title: `${pair.valueA} + ${pair.valueB}`,
+          desc: `Generates $${Math.round(pair.metricTotal).toLocaleString()} ${numericMetricCol} across ${pair.count.toLocaleString()} transactions.`,
+          colA: pair.colA,
+          valA: pair.valueA,
+          colB: pair.colB,
+          valB: pair.valueB,
+          metricTotal: pair.metricTotal,
+          count: pair.count
+        });
+      });
+    }
 
     return {
       nodes: generatedNodes,
@@ -266,120 +354,119 @@ export default function KnowledgeGraph({
       hubStats: hubs.sort((a, b) => b.connections - a.connections).slice(0, 4),
       topPairs: pairs.sort((a, b) => b.count - a.count).slice(0, 4),
       relationshipPairs,
+      anomalySignals: anomalies.slice(0, 4),
+      driverSignals: drivers,
+      adjacencyMap: adjMap
     };
   }, [tableData, datasetInfo, columns, numericMetricCol, sizeMode]);
 
-  // Translate graph structure into findings a user can act on immediately.
-  const graphFindings = useMemo(() => {
-    if (!tableData || tableData.length === 0) return [];
+  // Multi-Hop Path Finding Algorithm (BFS / Shortest and Strongest Paths between 2 nodes)
+  const discoveredPaths = useMemo(() => {
+    if (!selectedNode || !secondNode || !adjacencyMap) return [];
+    if (selectedNode.id === secondNode.id) return [];
 
-    const cols = columns && columns.length > 0 ? columns : Object.keys(tableData[0]);
-    const categorical = cols.filter((col) => {
-      const sample = tableData.find((row) => row[col] != null && row[col] !== '')?.[col];
-      return sample == null || !Number.isFinite(Number(sample));
-    });
-    const segments = [];
+    const startId = selectedNode.id;
+    const endId = secondNode.id;
+    const pathsFound = [];
 
-    categorical.forEach((col) => {
-      const groups = {};
-      tableData.forEach((row) => {
-        const raw = row[col];
-        if (raw == null || raw === '') return;
-        const value = String(raw);
-        groups[value] = groups[value] || { value, count: 0, metricTotal: 0 };
-        groups[value].count += 1;
-        if (numericMetricCol && Number.isFinite(Number(row[numericMetricCol]))) {
-          groups[value].metricTotal += Number(row[numericMetricCol]);
+    // Queue format: { currentId, path: [nodeIds], visited: Set }
+    const queue = [{ currentId: startId, path: [startId], visited: new Set([startId]) }];
+
+    while (queue.length > 0 && pathsFound.length < 5) {
+      const { currentId, path, visited } = queue.shift();
+
+      if (path.length > 4) continue; // max 4 hops
+
+      const neighbors = adjacencyMap.get(currentId) || [];
+      for (const { target } of neighbors) {
+        if (target === endId) {
+          pathsFound.push([...path, endId]);
+          break;
         }
-      });
-      Object.values(groups).forEach((group) => {
-        segments.push({ ...group, column: col, share: group.count / tableData.length });
-      });
+        if (!visited.has(target)) {
+          const nextVisited = new Set(visited);
+          nextVisited.add(target);
+          queue.push({
+            currentId: target,
+            path: [...path, target],
+            visited: nextVisited
+          });
+        }
+      }
+    }
+
+    // Map discovered node IDs back to node metadata and cohort analytics
+    return pathsFound.map((nodeIds, index) => {
+      const pathNodes = nodeIds.map((id) => nodes.find((n) => n.id === id)).filter(Boolean);
+      const valueNodes = pathNodes.filter((n) => n.type === 'value');
+
+      // Calculate cohort records matching all value nodes on this path
+      let matchingRows = tableData || [];
+      if (valueNodes.length > 0) {
+        matchingRows = matchingRows.filter((row) =>
+          valueNodes.every((vn) => String(row[vn.column]) === String(vn.value))
+        );
+      }
+
+      let metricSum = 0;
+      if (numericMetricCol && matchingRows.length > 0) {
+        metricSum = matchingRows.reduce((acc, r) => acc + (Number(r[numericMetricCol]) || 0), 0);
+      }
+
+      return {
+        id: `path-${index}`,
+        nodeIds,
+        pathNodes,
+        valueNodes,
+        hops: pathNodes.length - 1,
+        matchCount: matchingRows.length,
+        matchPercentage: ((matchingRows.length / (tableData?.length || 1)) * 100).toFixed(1),
+        metricSum: metricSum > 0 ? `$${Math.round(metricSum).toLocaleString()}` : null,
+      };
     });
+  }, [selectedNode, secondNode, adjacencyMap, nodes, tableData, numericMetricCol]);
 
-    const findings = [];
-    const dominant = [...segments].sort((a, b) => b.share - a.share)[0];
-    if (dominant) {
-      findings.push({
-        type: 'concentration',
-        label: `${dominant.value} dominates ${dominant.column}`,
-        detail: `${(dominant.share * 100).toFixed(1)}% of records · ${dominant.count.toLocaleString()} rows`,
-        action: `Filter to ${dominant.column} = ${dominant.value}`,
-        filter: dominant,
-        icon: 'sparkle',
-      });
+  // Compute Active Cohort when Nodes or Edges are selected for Visual Subgraph Slicing
+  const activeCohort = useMemo(() => {
+    if (!tableData || tableData.length === 0) return null;
+
+    let targetValueNodes = [];
+
+    if (selectedEdge) {
+      const srcNode = nodes.find((n) => n.id === selectedEdge.source);
+      const tgtNode = nodes.find((n) => n.id === selectedEdge.target);
+      if (srcNode?.type === 'value') targetValueNodes.push(srcNode);
+      if (tgtNode?.type === 'value') targetValueNodes.push(tgtNode);
+    } else if (selectedNode && secondNode) {
+      if (selectedNode.type === 'value') targetValueNodes.push(selectedNode);
+      if (secondNode.type === 'value') targetValueNodes.push(secondNode);
+    } else if (selectedNode) {
+      if (selectedNode.type === 'value') targetValueNodes.push(selectedNode);
     }
 
-    if (numericMetricCol) {
-      const leader = [...segments].sort((a, b) => b.metricTotal - a.metricTotal)[0];
-      if (leader && leader.metricTotal > 0) {
-        findings.push({
-          type: 'performance',
-          label: `${leader.value} leads ${leader.column}`,
-          detail: `${numericMetricCol}: ${Math.round(leader.metricTotal).toLocaleString()} across ${leader.count.toLocaleString()} rows`,
-          action: `Ask AI to explain ${leader.value}`,
-          prompt: `Explain why ${leader.value} in ${leader.column} contributes the most ${numericMetricCol}. Compare it with the other segments.`,
-          icon: 'trend',
-        });
-      }
-    }
+    if (targetValueNodes.length === 0) return null;
 
-    const relationship = relationshipPairs?.[0];
-    if (relationship) {
-      findings.push({
-        type: 'relationship',
-        label: `${relationship.valueA} × ${relationship.valueB}`,
-        detail: `${relationship.count.toLocaleString()} matching rows · ${relationship.share} of the dataset`,
-        action: 'Analyze this relationship',
-        prompt: `Analyze the relationship between ${relationship.colA} = '${relationship.valueA}' and ${relationship.colB} = '${relationship.valueB}'. Show the key metrics and how this compares with other combinations.`,
-        icon: 'intersect',
-      });
-    }
-
-    return findings;
-  }, [tableData, columns, numericMetricCol, relationshipPairs]);
-
-  // Compute Multi-Node Intersection Stats when two nodes are selected
-  const multiNodeIntersection = useMemo(() => {
-    if (!selectedNode || !secondNode || !tableData) return null;
-
-    const getColName = (node) => node.column || node.details?.column || (node.type === 'column' ? node.label : null);
-
-    const col1 = getColName(selectedNode);
-    const col2 = getColName(secondNode);
-
-    const matches = tableData.filter((r) => {
-      let match1 = true;
-      let match2 = true;
-
-      if (selectedNode.type === 'value') {
-        match1 = col1 ? String(r[col1]) === String(selectedNode.value) : true;
-      } else if (col1) {
-        match1 = r[col1] != null && r[col1] !== '';
-      }
-
-      if (secondNode.type === 'value') {
-        match2 = col2 ? String(r[col2]) === String(secondNode.value) : true;
-      } else if (col2) {
-        match2 = r[col2] != null && r[col2] !== '';
-      }
-
-      return match1 && match2;
-    });
+    const matches = tableData.filter((row) =>
+      targetValueNodes.every((node) => String(row[node.column]) === String(node.value))
+    );
 
     let sumMetric = 0;
     if (numericMetricCol) {
       sumMetric = matches.reduce((acc, r) => acc + (Number(r[numericMetricCol]) || 0), 0);
     }
 
+    const queryConditions = targetValueNodes
+      .map((n) => `${n.column} is '${n.value}'`)
+      .join(' and ');
+
     return {
+      nodes: targetValueNodes,
       count: matches.length,
       percentage: `${((matches.length / tableData.length) * 100).toFixed(1)}%`,
-      sumMetric: sumMetric > 0 ? `$${Math.round(sumMetric).toLocaleString()}` : null,
-      node1: selectedNode.label,
-      node2: secondNode.label,
+      filterQuery: `show records where ${queryConditions}`,
+      promptQuery: `Show summary and distribution where ${queryConditions}`,
     };
-  }, [selectedNode, secondNode, tableData, numericMetricCol]);
+  }, [selectedEdge, selectedNode, secondNode, nodes, tableData, numericMetricCol]);
 
   // Node Positions and Animation Physics Loop
   const nodesRef = useRef(nodes);
@@ -412,10 +499,10 @@ export default function KnowledgeGraph({
 
       ctx.clearRect(0, 0, width, height);
 
-      // Draw Background Grid
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+      // Draw Subtle Background Grid
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
       ctx.lineWidth = 1;
-      const gridSize = 40;
+      const gridSize = 36;
       for (let x = 0; x < width; x += gridSize) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -430,6 +517,8 @@ export default function KnowledgeGraph({
       }
 
       const activeNodes = nodesRef.current;
+      const activePath = discoveredPaths[activePathIndex];
+      const activePathNodeIds = new Set(activePath?.nodeIds || []);
 
       // Update Node Physics Simulation
       if (isPhysicsActive) {
@@ -462,47 +551,48 @@ export default function KnowledgeGraph({
         const tx = targetNode.x + centerX;
         const ty = targetNode.y + centerY;
 
+        const isEdgeInActivePath =
+          activePathNodeIds.size > 0 &&
+          activePathNodeIds.has(sourceNode.id) &&
+          activePathNodeIds.has(targetNode.id);
+
         const isHighlighted =
+          isEdgeInActivePath ||
+          (selectedEdge && selectedEdge.id === edge.id) ||
+          (hoveredEdge && hoveredEdge.id === edge.id) ||
           (hoveredNode && (hoveredNode.id === sourceNode.id || hoveredNode.id === targetNode.id)) ||
           (selectedNode && (selectedNode.id === sourceNode.id || selectedNode.id === targetNode.id)) ||
           (secondNode && (secondNode.id === sourceNode.id || secondNode.id === targetNode.id));
 
+        // Dim edges not in active path if a path is actively traced
+        const shouldDim = activePathNodeIds.size > 0 && !isEdgeInActivePath;
+
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(tx, ty);
-        ctx.strokeStyle = isHighlighted ? 'rgba(219, 53, 82, 0.85)' : edge.color;
-        ctx.lineWidth = isHighlighted ? 2.5 : edge.weight;
+        ctx.strokeStyle = isEdgeInActivePath
+          ? '#10b981'
+          : isHighlighted
+          ? 'rgba(219, 53, 82, 0.85)'
+          : shouldDim
+          ? 'rgba(255, 255, 255, 0.05)'
+          : edge.color;
+        ctx.lineWidth = isEdgeInActivePath ? 3.5 : isHighlighted ? 2.5 : edge.weight;
         ctx.setLineDash(edge.relationship ? [4, 4] : []);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Animated flow particles
-        if (isPhysicsActive) {
-          const time = (Date.now() * 0.0015 + activeNodes.indexOf(sourceNode)) % 1;
+        // Animated flow particles along active paths or highlighted connections
+        if (isPhysicsActive && (isHighlighted || isEdgeInActivePath || !shouldDim)) {
+          const time = (Date.now() * (isEdgeInActivePath ? 0.0025 : 0.0012) + activeNodes.indexOf(sourceNode)) % 1;
           const px = sx + (tx - sx) * time;
           const py = sy + (ty - sy) * time;
           ctx.beginPath();
-          ctx.arc(px, py, 2, 0, Math.PI * 2);
-          ctx.fillStyle = isHighlighted ? '#db3552' : '#ffffff';
+          ctx.arc(px, py, isEdgeInActivePath ? 3.5 : 2, 0, Math.PI * 2);
+          ctx.fillStyle = isEdgeInActivePath ? '#10b981' : isHighlighted ? '#db3552' : '#ffffff';
           ctx.fill();
         }
       });
-
-      // Draw Multi-Node Link Line if two nodes are selected
-      if (selectedNode && secondNode) {
-        const n1 = activeNodes.find((n) => n.id === selectedNode.id);
-        const n2 = activeNodes.find((n) => n.id === secondNode.id);
-        if (n1 && n2) {
-          ctx.beginPath();
-          ctx.moveTo(n1.x + centerX, n1.y + centerY);
-          ctx.lineTo(n2.x + centerX, n2.y + centerY);
-          ctx.strokeStyle = '#10b981';
-          ctx.lineWidth = 3;
-          ctx.setLineDash([5, 5]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
 
       // Draw Nodes
       activeNodes.forEach((node) => {
@@ -512,15 +602,20 @@ export default function KnowledgeGraph({
         const isHovered = hoveredNode?.id === node.id;
         const isSelected = selectedNode?.id === node.id;
         const isSecond = secondNode?.id === node.id;
+        const isInActivePath = activePathNodeIds.has(node.id);
         const isMatchSearch = searchQuery && node.label.toLowerCase().includes(searchQuery.toLowerCase());
+        const shouldDim = activePathNodeIds.size > 0 && !isInActivePath;
+
+        const opacity = shouldDim ? 0.25 : 1.0;
+        ctx.globalAlpha = opacity;
 
         // Aura Rings
-        if (viewMode === 'vector' || isHovered || isSelected || isSecond || isMatchSearch) {
+        if (viewMode === 'vector' || isHovered || isSelected || isSecond || isInActivePath || isMatchSearch) {
           ctx.beginPath();
-          ctx.arc(nx, ny, node.radius + (isHovered || isSelected ? 12 : 8), 0, Math.PI * 2);
-          ctx.fillStyle = isSecond ? '#10b98133' : `${node.color}22`;
+          ctx.arc(nx, ny, node.radius + (isHovered || isSelected || isInActivePath ? 12 : 8), 0, Math.PI * 2);
+          ctx.fillStyle = isInActivePath ? '#10b98133' : isSecond ? '#10b98133' : `${node.color}22`;
           ctx.fill();
-          ctx.strokeStyle = isSecond ? '#10b981' : node.color;
+          ctx.strokeStyle = isInActivePath ? '#10b981' : isSecond ? '#10b981' : node.color;
           ctx.lineWidth = 1.5;
           ctx.stroke();
         }
@@ -528,10 +623,10 @@ export default function KnowledgeGraph({
         // Solid Node Circle
         ctx.beginPath();
         ctx.arc(nx, ny, node.radius, 0, Math.PI * 2);
-        ctx.fillStyle = isSecond ? '#10b981' : node.color;
+        ctx.fillStyle = isInActivePath ? '#10b981' : isSecond ? '#10b981' : node.color;
         ctx.fill();
-        ctx.strokeStyle = isSelected || isSecond ? '#ffffff' : 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = isSelected || isSecond ? 3 : 1.5;
+        ctx.strokeStyle = isSelected || isSecond || isInActivePath ? '#ffffff' : 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = isSelected || isSecond || isInActivePath ? 3 : 1.5;
         ctx.stroke();
 
         // Node Label
@@ -539,6 +634,8 @@ export default function KnowledgeGraph({
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
         ctx.fillText(node.label, nx, ny + node.radius + 14);
+
+        ctx.globalAlpha = 1.0;
       });
 
       animationFrameId = requestAnimationFrame(render);
@@ -550,7 +647,7 @@ export default function KnowledgeGraph({
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [edges, viewMode, isPhysicsActive, hoveredNode, selectedNode, secondNode, searchQuery]);
+  }, [edges, viewMode, isPhysicsActive, hoveredNode, hoveredEdge, selectedNode, secondNode, selectedEdge, searchQuery, discoveredPaths, activePathIndex]);
 
   // Pointer Interactivity (Hover, Select, Drag)
   const getNodeAtCoords = (clientX, clientY) => {
@@ -576,18 +673,28 @@ export default function KnowledgeGraph({
       const clickY = e.clientY - rect.top - canvas.height / 2;
       dragOffsetRef.current = { x: node.x - clickX, y: node.y - clickY };
 
-      // Handle Node Selection (Single or Dual Node Intersection Mode)
+      setSelectedEdge(null);
+
+      // Handle Node Selection (Single or Multi-Node / Path Finder Mode)
       if (e.shiftKey || selectedNode) {
         if (selectedNode && selectedNode.id !== node.id) {
           setSecondNode(node);
+          setActiveSidePanel('paths');
         } else {
           setSelectedNode(node);
           setSecondNode(null);
+          setActiveSidePanel('inspector');
         }
       } else {
         setSelectedNode(node);
         setSecondNode(null);
+        setActiveSidePanel('inspector');
       }
+    } else {
+      // Click canvas background to deselect
+      setSelectedNode(null);
+      setSecondNode(null);
+      setSelectedEdge(null);
     }
   };
 
@@ -622,15 +729,29 @@ export default function KnowledgeGraph({
     link.click();
   };
 
+  // One-Click AI Graph Synthesis
+  const handleSynthesizeNarrative = () => {
+    if (!onExecuteQuery) return;
+    const primaryHub = hubStats[0]?.name || (columns && columns[0]);
+    const secondaryHub = hubStats[1]?.name;
+    const prompt = secondaryHub 
+      ? `Show distribution and breakdown across ${primaryHub} and ${secondaryHub}`
+      : primaryHub 
+      ? `Show distribution and summary of ${primaryHub}`
+      : 'Show summary distribution of records';
+
+    onExecuteQuery(prompt);
+  };
+
   return (
     <div className="flex h-full w-full bg-[#161214] text-white relative overflow-hidden select-none">
 
       {/* Top Floating Control Bar */}
-      <div className="absolute top-4 left-4 right-4 z-10 flex flex-wrap items-center justify-between gap-3 bg-black/70 backdrop-blur-md border border-white/10 p-3 rounded-xl">
+      <div className="absolute top-4 left-4 right-4 z-10 flex flex-wrap items-center justify-between gap-3 bg-black/75 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-lg">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <ShareNetwork size={18} className="text-[var(--color-accent)]" />
-            <h3 className="text-xs font-mono font-bold tracking-tight">KNOWLEDGE GRAPH & VECTORS</h3>
+            <h3 className="text-xs font-mono font-bold tracking-tight">KNOWLEDGE GRAPH & INTELLIGENCE</h3>
           </div>
           <span className="text-[9px] font-mono bg-white/10 px-2 py-0.5 rounded text-zinc-300">
             {nodes.length} Nodes · {edges.length} Links
@@ -646,7 +767,7 @@ export default function KnowledgeGraph({
               placeholder="Search entities..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-white/5 border border-white/10 text-xs font-mono pl-8 pr-3 py-1.5 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-[var(--color-accent)] w-40 sm:w-48"
+              className="bg-white/5 border border-white/10 text-xs font-mono pl-8 pr-3 py-1.5 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-[var(--color-accent)] w-36 sm:w-44"
             />
           </div>
 
@@ -692,17 +813,31 @@ export default function KnowledgeGraph({
             </button>
           </div>
 
+          {/* Side Drawer Toggle Tabs */}
           <button
-            onClick={() => setShowIntelPanel(!showIntelPanel)}
-            className={`p-2 rounded-lg border text-xs font-mono font-bold flex items-center gap-1 cursor-pointer transition-all ${
-              showIntelPanel ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white' : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white'
+            onClick={() => setActiveSidePanel(activeSidePanel === 'intel' ? null : 'intel')}
+            className={`p-2 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+              activeSidePanel === 'intel' ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white' : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white'
             }`}
             title="Toggle Graph Intelligence Panel"
           >
             <TrendUp size={13} />
-            <span>Intel</span>
-            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-emerald-300">{graphFindings.length}</span>
+            <span>Signals</span>
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[9px] text-emerald-300">{anomalySignals.length + driverSignals.length}</span>
           </button>
+
+          {selectedNode && secondNode && (
+            <button
+              onClick={() => setActiveSidePanel(activeSidePanel === 'paths' ? null : 'paths')}
+              className={`p-2 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                activeSidePanel === 'paths' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-white/5 border-white/10 text-emerald-400 hover:text-white'
+              }`}
+              title="View Discovered Paths"
+            >
+              <GitFork size={13} />
+              <span>Paths ({discoveredPaths.length})</span>
+            </button>
+          )}
 
           <button
             onClick={handleExportPNG}
@@ -717,7 +852,7 @@ export default function KnowledgeGraph({
             className="p-2 rounded-lg border border-white/10 bg-white/5 text-zinc-300 hover:text-white transition-all cursor-pointer"
             title={isPhysicsActive ? 'Pause Physics' : 'Play Physics'}
           >
-            <Play size={13} className={isPhysicsActive ? 'text-emerald-400' : ''} />
+            {isPhysicsActive ? <Pause size={13} className="text-emerald-400" /> : <Play size={13} />}
           </button>
         </div>
       </div>
@@ -732,149 +867,300 @@ export default function KnowledgeGraph({
           className="w-full h-full block"
         />
 
-        {/* Floating Helper Banner */}
-        <div className="absolute bottom-4 left-4 z-10 text-[10px] font-mono text-zinc-400 bg-black/70 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-3">
-          <span>💡 Shift+Click 2 nodes for Intersection Analysis</span>
+        {/* Floating Subgraph / Cohort Quick Action Badge */}
+        {activeCohort && (
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 bg-[#1e171b]/95 backdrop-blur-md border border-emerald-500/40 px-4 py-2.5 rounded-xl shadow-2xl">
+            <div className="flex items-center gap-2">
+              <Intersect size={16} className="text-emerald-400 animate-pulse" />
+              <div>
+                <p className="text-[11px] font-mono font-bold text-white">
+                  Active Cohort: {activeCohort.nodes.map((n) => `${n.column}='${n.value}'`).join(' ∩ ')}
+                </p>
+                <p className="text-[9px] font-mono text-zinc-400">
+                  {activeCohort.count.toLocaleString()} rows ({activeCohort.percentage}){activeCohort.metricSum ? ` · ${activeCohort.metricSum}` : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pl-2 border-l border-white/10">
+              {onFilterTable && (
+                <button
+                  onClick={() => onFilterTable(activeCohort.filterQuery)}
+                  className="btn-secondary px-2.5 py-1 text-[10px] font-mono font-bold flex items-center gap-1 cursor-pointer"
+                  title="Filter Data Table by this Subgraph Cohort"
+                >
+                  <Table size={12} className="text-emerald-400" />
+                  <span>Slice Table</span>
+                </button>
+              )}
+
+              {onNavigateTab && (
+                <button
+                  onClick={() => onNavigateTab('visualize')}
+                  className="btn-secondary px-2.5 py-1 text-[10px] font-mono font-bold flex items-center gap-1 cursor-pointer"
+                  title="Build Chart for this Cohort"
+                >
+                  <ChartBar size={12} className="text-[var(--color-accent)]" />
+                  <span>Plot Cohort</span>
+                </button>
+              )}
+
+              {onExecuteQuery && (
+                <button
+                  onClick={() => onExecuteQuery(activeCohort.promptQuery)}
+                  className="btn-primary px-2.5 py-1 text-[10px] font-mono font-bold flex items-center gap-1 cursor-pointer"
+                  title="Ask AI to Explain Cohort"
+                >
+                  <Lightning size={12} />
+                  <span>Ask AI</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Floating Helper Tip Banner */}
+        <div className="absolute bottom-4 left-4 z-10 text-[10px] font-mono text-zinc-400 bg-black/75 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-3">
+          <span>💡 Shift+Click 2 nodes for Multi-Hop Path Finding</span>
+          <span>•</span>
+          <span>Click any node or link to slice dataset</span>
           <span>•</span>
           <span>Drag nodes to organize</span>
-          <span>•</span>
-          <span>Click node for actions</span>
         </div>
       </div>
 
-      {/* Graph Intelligence Side Panel Drawer */}
-      {showIntelPanel && (
-        <div className="w-80 h-full border-l border-white/10 bg-[#191316] p-5 z-20 flex flex-col space-y-4 overflow-y-auto">
+      {/* Drawer 1: Graph Intelligence & Root-Cause Signals */}
+      {activeSidePanel === 'intel' && (
+        <div className="w-84 h-full border-l border-white/10 bg-[#181215] p-5 z-20 flex flex-col space-y-4 overflow-y-auto">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <div className="flex items-center gap-2">
               <TrendUp size={16} className="text-[var(--color-accent)]" />
               <h4 className="text-xs font-mono font-bold text-white uppercase">Graph Intelligence</h4>
             </div>
-            <button onClick={() => setShowIntelPanel(false)} className="text-zinc-400 hover:text-white cursor-pointer">
+            <button onClick={() => setActiveSidePanel(null)} className="text-zinc-400 hover:text-white cursor-pointer">
               <X size={14} />
             </button>
           </div>
 
+          {/* One-Click Executive AI Synthesis */}
+          {onExecuteQuery && (
+            <button
+              onClick={handleSynthesizeNarrative}
+              className="w-full btn-primary py-2 text-xs font-mono font-bold flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+            >
+              <Sparkle size={14} className="text-amber-300" />
+              <span>Synthesize Graph Narrative</span>
+            </button>
+          )}
+
           <div className="space-y-4 text-xs font-mono">
-            {/* Actionable Findings */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-zinc-400 uppercase font-bold">What the graph reveals</p>
-                <span className="text-[9px] text-emerald-400">evidence-based</span>
-              </div>
-              {graphFindings.length > 0 ? graphFindings.map((finding, index) => {
-                const FindingIcon = finding.icon === 'trend' ? TrendUp : finding.icon === 'intersect' ? Intersect : Sparkle;
-                return (
-                  <div key={`${finding.type}-${index}`} className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3 space-y-2">
+            {/* Key Driver Signals */}
+            {driverSignals.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-zinc-400 uppercase font-bold">Top Value & Revenue Drivers</p>
+                  <span className="text-[9px] text-emerald-400">drivers</span>
+                </div>
+                {driverSignals.map((driver, index) => (
+                  <div key={`driver-${index}`} className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3 space-y-2">
                     <div className="flex items-start gap-2">
-                      <FindingIcon size={15} className="text-emerald-400 mt-0.5 shrink-0" />
+                      <TrendUp size={15} className="text-emerald-400 mt-0.5 shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-[11px] text-white font-bold leading-snug">{finding.label}</p>
-                        <p className="text-[10px] text-zinc-400 leading-relaxed mt-1">{finding.detail}</p>
+                        <p className="text-[11px] text-white font-bold leading-snug">{driver.title}</p>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed mt-1">{driver.desc}</p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      {finding.filter && onFilterTable && (
+                    <div className="flex gap-2 pt-1">
+                      {onFilterTable && (
                         <button
-                          onClick={() => onFilterTable(finding.filter.column, finding.filter.value)}
-                          className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[9px] text-zinc-200 hover:bg-white/10 cursor-pointer transition-colors"
+                          onClick={() => onFilterTable(`show records where ${driver.colA} is '${driver.valA}' and ${driver.colB} is '${driver.valB}'`)}
+                          className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[9px] text-zinc-200 hover:bg-white/10 cursor-pointer"
                         >
-                          <Table size={11} className="inline mr-1" />
-                          Filter rows
+                          <Table size={10} className="inline mr-1" />
+                          Filter
                         </button>
                       )}
-                      {finding.prompt && onExecuteQuery && (
+                      {onExecuteQuery && (
                         <button
-                          onClick={() => onExecuteQuery(finding.prompt)}
-                          className="flex-1 rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[9px] text-white hover:opacity-90 cursor-pointer transition-opacity"
+                          onClick={() => onExecuteQuery(`Show distribution and comparison where ${driver.colA} is '${driver.valA}' and ${driver.colB} is '${driver.valB}'`)}
+                          className="flex-1 rounded-md bg-[var(--color-accent)] px-2 py-1 text-[9px] text-white hover:opacity-90 cursor-pointer"
                         >
-                          <Lightning size={11} className="inline mr-1" />
-                          {finding.action}
+                          <Lightning size={10} className="inline mr-1" />
+                          Deep-Dive
                         </button>
                       )}
                     </div>
-                  </div>
-                );
-              }) : (
-                <p className="text-[10px] text-zinc-500 leading-relaxed">Add more categorical or numeric fields to surface relationships and performance signals.</p>
-              )}
-            </div>
-
-            {/* Hub Centrality */}
-            <div className="card p-3 bg-white/5 border-white/10 space-y-2">
-              <p className="text-[10px] text-zinc-400 uppercase font-bold">Most informative fields</p>
-              {hubStats.map((h, i) => (
-                <div key={i} className="flex items-center justify-between text-[11px]">
-                  <span className="text-white font-bold">{h.name}</span>
-                  <span className="text-zinc-400 text-[10px]">{h.connections} values · {h.coverage}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Most common values */}
-            <div className="card p-3 bg-white/5 border-white/10 space-y-2">
-              <p className="text-[10px] text-zinc-400 uppercase font-bold">Most common values</p>
-              {topPairs.map((p, i) => (
-                <div key={i} className="flex items-center justify-between text-[11px]">
-                  <span className="text-emerald-400 font-bold truncate max-w-[170px]">{p.entity}</span>
-                  <span className="text-white bg-white/10 px-1.5 py-0.2 rounded text-[10px]">{p.share}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Cross-column relationships */}
-            {relationshipPairs.length > 0 && (
-              <div className="card p-3 bg-emerald-500/5 border-emerald-500/20 space-y-2">
-                <p className="text-[10px] text-zinc-400 uppercase font-bold">Strongest relationships</p>
-                {relationshipPairs.slice(0, 3).map((pair, i) => (
-                  <div key={i} className="flex items-center justify-between gap-2 text-[10px]">
-                    <span className="text-zinc-200 truncate">{pair.valueA} <span className="text-emerald-400">×</span> {pair.valueB}</span>
-                    <span className="text-emerald-400 shrink-0">{pair.share}</span>
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Relational Anomalies & Bottlenecks */}
+            {anomalySignals.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-amber-400 uppercase font-bold">Relational Bottlenecks & Outliers</p>
+                  <span className="text-[9px] text-amber-400">anomalies</span>
+                </div>
+                {anomalySignals.map((anomaly, index) => (
+                  <div key={`anomaly-${index}`} className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <WarningCircle size={15} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-white font-bold leading-snug">{anomaly.title}</p>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed mt-1">{anomaly.desc}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      {onFilterTable && (
+                        <button
+                          onClick={() => onFilterTable(`show records where ${anomaly.colA} is '${anomaly.valA}' and ${anomaly.colB} is '${anomaly.valB}'`)}
+                          className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[9px] text-zinc-200 hover:bg-white/10 cursor-pointer"
+                        >
+                          <Table size={10} className="inline mr-1" />
+                          Inspect
+                        </button>
+                      )}
+                      {onExecuteQuery && (
+                        <button
+                          onClick={() => onExecuteQuery(`Show count and breakdown where ${anomaly.colA} is '${anomaly.valA}' and ${anomaly.colB} is '${anomaly.valB}'`)}
+                          className="flex-1 rounded-md bg-amber-600 px-2 py-1 text-[9px] text-white hover:opacity-90 cursor-pointer"
+                        >
+                          <Lightning size={10} className="inline mr-1" />
+                          Analyze
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Hub Centrality */}
+            <div className="card p-3 bg-white/5 border-white/10 space-y-2">
+              <p className="text-[10px] text-zinc-400 uppercase font-bold">Most Connected Dimensions</p>
+              {hubStats.map((h, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px]">
+                  <span className="text-white font-bold">{h.name}</span>
+                  <span className="text-zinc-400 text-[10px]">{h.connections} distinct · {h.coverage}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drawer 2: Discovered Multi-Hop Paths Panel */}
+      {activeSidePanel === 'paths' && selectedNode && secondNode && (
+        <div className="w-84 h-full border-l border-white/10 bg-[#191417] p-5 z-20 flex flex-col space-y-4 overflow-y-auto">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="flex items-center gap-2">
+              <GitFork size={16} className="text-emerald-400" />
+              <h4 className="text-xs font-mono font-bold text-white uppercase">Discovered Paths</h4>
+            </div>
+            <button onClick={() => setActiveSidePanel(null)} className="text-zinc-400 hover:text-white cursor-pointer">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="card p-3 bg-emerald-500/10 border-emerald-500/30 space-y-2 text-xs font-mono">
+            <p className="text-[10px] text-emerald-400 uppercase font-bold">Origin ➔ Destination</p>
+            <div className="flex items-center gap-2 text-white font-bold">
+              <span className="truncate max-w-[100px]">{selectedNode.label}</span>
+              <ArrowRight size={14} className="text-emerald-400 shrink-0" />
+              <span className="truncate max-w-[100px]">{secondNode.label}</span>
+            </div>
+          </div>
+
+          <div className="space-y-3 flex-1 text-xs font-mono">
+            <p className="text-[10px] text-zinc-400 uppercase font-bold">Discovered Traversal Paths ({discoveredPaths.length})</p>
+
+            {discoveredPaths.length > 0 ? (
+              discoveredPaths.map((p, idx) => (
+                <div
+                  key={p.id}
+                  onClick={() => setActivePathIndex(idx)}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all space-y-2 ${
+                    activePathIndex === idx
+                      ? 'bg-emerald-500/20 border-emerald-400 shadow-md'
+                      : 'bg-white/5 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-emerald-300">Path #{idx + 1} ({p.hops} hops)</span>
+                    <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-zinc-300">{p.matchCount} rows ({p.matchPercentage})</span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1 text-[10px] text-zinc-200">
+                    {p.pathNodes.map((n, i) => (
+                      <span key={i} className="flex items-center gap-1">
+                        <span className={`px-1.5 py-0.5 rounded ${n.type === 'value' ? 'bg-emerald-400/20 text-emerald-300' : 'bg-blue-400/20 text-blue-300'}`}>
+                          {n.label}
+                        </span>
+                        {i < p.pathNodes.length - 1 && <ArrowRight size={10} className="text-zinc-500" />}
+                      </span>
+                    ))}
+                  </div>
+
+                  {p.metricSum && (
+                    <p className="text-[9px] text-emerald-400">Cohort Revenue / Metric: {p.metricSum}</p>
+                  )}
+
+                  <div className="flex gap-2 pt-1">
+                    {onFilterTable && p.valueNodes.length > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const conditions = p.valueNodes.map((n) => `${n.column} is '${n.value}'`).join(' and ');
+                          onFilterTable(`show records where ${conditions}`);
+                        }}
+                        className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[9px] text-zinc-200 hover:bg-white/10 cursor-pointer"
+                      >
+                        <Table size={10} className="inline mr-1" />
+                        Filter Table
+                      </button>
+                    )}
+
+                    {onExecuteQuery && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const valueConditions = p.valueNodes.length > 0
+                            ? p.valueNodes.map((n) => `${n.column} is '${n.value}'`).join(' and ')
+                            : `${selectedNode.label} and ${secondNode.label}`;
+                          onExecuteQuery(`Show records and comparison where ${valueConditions}`);
+                        }}
+                        className="flex-1 rounded bg-[var(--color-accent)] py-1 text-[9px] text-white hover:opacity-90 cursor-pointer"
+                      >
+                        <Lightning size={10} className="inline mr-1" />
+                        Explain Path
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-[10px] text-zinc-500 leading-relaxed">
+                No direct or multi-hop path found connecting these two specific nodes. Try selecting different dimensions.
+              </p>
             )}
           </div>
         </div>
       )}
 
-      {/* Node Inspector & Multi-Node Intersection Card */}
-      {selectedNode && (
-        <div className="w-80 h-full border-l border-white/10 bg-[#1d181a] p-5 z-20 flex flex-col space-y-4 overflow-y-auto">
+      {/* Drawer 3: Single Node Inspector */}
+      {activeSidePanel === 'inspector' && selectedNode && !secondNode && (
+        <div className="w-84 h-full border-l border-white/10 bg-[#1d181a] p-5 z-20 flex flex-col space-y-4 overflow-y-auto">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded-full" style={{ background: selectedNode.color }} />
               <h4 className="text-xs font-mono font-bold text-white uppercase truncate max-w-[180px]">{selectedNode.label}</h4>
             </div>
-            <button onClick={() => { setSelectedNode(null); setSecondNode(null); }} className="text-zinc-400 hover:text-white cursor-pointer">
+            <button onClick={() => setActiveSidePanel(null)} className="text-zinc-400 hover:text-white cursor-pointer">
               <X size={14} />
             </button>
           </div>
 
-          {/* Dual-Node Intersection Card */}
-          {multiNodeIntersection && (
-            <div className="card p-3 bg-emerald-500/10 border-emerald-500/30 space-y-2">
-              <div className="flex items-center gap-1.5 text-emerald-400 text-[10px] font-mono font-bold uppercase">
-                <Intersect size={14} />
-                <span>Multi-Node Intersection</span>
-              </div>
-              <p className="text-[11px] font-mono text-zinc-300">
-                Overlap: <span className="text-white font-bold">{multiNodeIntersection.node1}</span> ∩ <span className="text-white font-bold">{multiNodeIntersection.node2}</span>
-              </p>
-              <div className="flex items-center justify-between text-[11px] font-mono pt-1">
-                <span className="text-zinc-400">Matching Rows:</span>
-                <span className="text-emerald-400 font-bold">{multiNodeIntersection.count} ({multiNodeIntersection.percentage})</span>
-              </div>
-              {multiNodeIntersection.sumMetric && (
-                <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-zinc-400">Total Revenue:</span>
-                  <span className="text-emerald-400 font-bold">{multiNodeIntersection.sumMetric}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Node Metadata & Action Toolkit */}
           <div className="space-y-3 flex-1 text-xs font-mono">
             <div className="card p-3 bg-white/5 border-white/10 space-y-1">
               <p className="text-[10px] text-zinc-400 uppercase">Entity Class</p>
@@ -917,8 +1203,8 @@ export default function KnowledgeGraph({
                 <button
                   onClick={() => {
                     const prompt = selectedNode.value
-                      ? `Show detailed analysis and total revenue for ${selectedNode.column} '${selectedNode.value}'`
-                      : `Analyze distribution and key trends for ${selectedNode.label}`;
+                      ? `Show summary and distribution for ${selectedNode.column} '${selectedNode.value}'`
+                      : `Show distribution and summary of ${selectedNode.label}`;
                     onExecuteQuery(prompt);
                   }}
                   className="w-full btn-primary py-2.5 text-xs font-mono font-bold flex items-center justify-center gap-2 cursor-pointer"

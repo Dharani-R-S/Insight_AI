@@ -345,10 +345,23 @@ def nl_to_sql(
     if q_norm in {'show all data', 'show all', 'select all', 'show data', 'all data', 'show records', 'view all data', 'view data'}:
         return "SELECT * FROM data LIMIT 1000"
 
-    match_filter = re.match(r"^show records where ([\w_]+) is ['\"](.+)['\"]$", q_norm, re.IGNORECASE)
-    if match_filter:
-        col_name, val = match_filter.groups()
-        return f'SELECT * FROM data WHERE "{col_name}" = \'{val}\' LIMIT 1000'
+    # Fast path for compound 'show records where ...' queries (single or multi-condition)
+    if q_norm.startswith('show records where '):
+        conditions_str = question[len('show records where '):].strip()
+        # Parse patterns like col is 'val' or col = 'val' separated by 'and'
+        parts = re.split(r'\s+and\s+', conditions_str, flags=re.IGNORECASE)
+        where_clauses = []
+        valid_compound = True
+        for part in parts:
+            m = re.match(r"^\s*([\w_]+)\s+(?:is|=)\s+['\"](.+?)['\"]\s*$", part, re.IGNORECASE)
+            if m:
+                c_name, c_val = m.groups()
+                where_clauses.append(f'"{c_name}" = \'{c_val}\'')
+            else:
+                valid_compound = False
+                break
+        if valid_compound and where_clauses:
+            return f"SELECT * FROM data WHERE {' AND '.join(where_clauses)} LIMIT 1000"
 
     schema_str = "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
 
