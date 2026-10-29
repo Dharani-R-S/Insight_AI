@@ -92,12 +92,14 @@ function DashboardChartPreview({ rec, sampleRows, colorIndex = 0 }) {
     const yAxis = rec?.y_axis || rec?.features?.[1] || Object.keys(sampleRows[0]).find(k => k !== xAxis && typeof sampleRows[0][k] === 'number') || Object.keys(sampleRows[0])[1];
     
     const grouped = {};
-    sampleRows.slice(0, 10).forEach(row => {
-      const xVal = String(row[xAxis] ?? 'Other').slice(0, 12);
+    sampleRows.forEach(row => {
+      const xVal = String(row[xAxis] ?? 'Other').trim();
       const yVal = parseFloat(row[yAxis]) || 1;
       grouped[xVal] = (grouped[xVal] || 0) + yVal;
     });
-    return Object.entries(grouped).map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }));
+    return Object.entries(grouped)
+      .slice(0, 10)
+      .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }));
   })();
 
   if (!previewData || previewData.length === 0) return null;
@@ -105,6 +107,11 @@ function DashboardChartPreview({ rec, sampleRows, colorIndex = 0 }) {
   const chartColor = CHART_PALETTE[colorIndex % CHART_PALETTE.length];
   const nameKey = previewData[0]?.name !== undefined ? 'name' : (rec.x_axis || 'x');
   const valKey = previewData[0]?.value !== undefined ? 'value' : (rec.y_axis || 'y');
+
+  const formatAxisLabel = (val) => {
+    const s = String(val ?? '');
+    return s.length > 14 ? `${s.slice(0, 12)}...` : s;
+  };
 
   return (
     <div className="h-44 w-full pt-2">
@@ -118,7 +125,7 @@ function DashboardChartPreview({ rec, sampleRows, colorIndex = 0 }) {
               </linearGradient>
             </defs>
             <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} opacity={0.3} />
-            <XAxis dataKey={nameKey} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border)', opacity: 0.5 }} tickLine={false} />
+            <XAxis dataKey={nameKey} tickFormatter={formatAxisLabel} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border)', opacity: 0.5 }} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={false} tickLine={false} />
             <Tooltip 
               contentStyle={{ 
@@ -152,7 +159,7 @@ function DashboardChartPreview({ rec, sampleRows, colorIndex = 0 }) {
         ) : (
           <BarChart data={previewData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
             <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} opacity={0.3} />
-            <XAxis dataKey={nameKey} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border)', opacity: 0.5 }} tickLine={false} />
+            <XAxis dataKey={nameKey} tickFormatter={formatAxisLabel} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={{ stroke: 'var(--color-border)', opacity: 0.5 }} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} axisLine={false} tickLine={false} />
             <Tooltip 
               contentStyle={{ 
@@ -265,20 +272,85 @@ export default function DashboardPage({
 
   // Calculate Executive KPIs
   const computeExecutiveKPIs = () => {
-    if (!datasetInfo || !datasetInfo.sample_rows || datasetInfo.sample_rows.length === 0) return null;
+    if (!datasetInfo) return null;
 
-    const rows = datasetInfo.sample_rows;
+    const stats = datasetInfo.summary_stats;
+    const rows = datasetInfo.sample_rows || [];
     const cols = datasetInfo.columns || [];
 
+    const formatVal = (val, isCurr) => {
+      if (typeof val !== 'number' || isNaN(val)) return '0';
+      if (isCurr) {
+        if (val >= 1000000) return `$${(val / 1000000).toFixed(2)}M`;
+        if (val >= 1000) return `$${Math.round(val).toLocaleString()}`;
+        return `$${val.toFixed(2)}`;
+      } else {
+        if (val >= 1000000) return `${(val / 1000000).toFixed(2)}M`;
+        return Math.round(val).toLocaleString();
+      }
+    };
+
+    const pluralizeCat = (catName) => {
+      if (!catName) return 'Categories';
+      const clean = catName.replace(/_/g, ' ').trim();
+      if (clean.toLowerCase().endsWith('y')) {
+        return clean.slice(0, -1) + 'ies';
+      }
+      if (clean.toLowerCase().endsWith('s')) {
+        return clean;
+      }
+      return clean + 's';
+    };
+
+    if (stats && stats.primary_metric) {
+      const pm = stats.primary_metric;
+      const catEntries = Object.entries(stats.categorical_counts || {});
+      const topCat = catEntries.length > 0 ? catEntries[0] : null;
+
+      return {
+        primary: {
+          label: `Total ${pm.label}`,
+          value: formatVal(pm.total, pm.is_currency),
+          desc: `Calculated across ${stats.row_count?.toLocaleString()} active records`,
+          badge: 'Primary Metric'
+        },
+        secondary: [
+          {
+            label: `Avg ${pm.label}`,
+            value: formatVal(pm.avg, pm.is_currency),
+            icon: TrendUp,
+            desc: 'Average metric value per record'
+          },
+          {
+            label: topCat ? `Unique ${pluralizeCat(topCat[0])}` : 'Active Schema',
+            value: topCat ? topCat[1].toLocaleString() : `${cols.length} Dimensions`,
+            icon: ChartDonut,
+            desc: 'Categorical dimension breakdown'
+          },
+          {
+            label: 'Data Completeness',
+            value: '100% Parsed',
+            icon: CheckCircle,
+            statusColor: 'text-emerald-500',
+            desc: 'SQLite memory instance ready'
+          }
+        ]
+      };
+    }
+
+    // Fallback if summary_stats is not provided
     const numericCol = cols.find(c => {
       const name = c.toLowerCase();
-      return (name.includes('sales') || name.includes('amount') || name.includes('revenue') || name.includes('price') || name.includes('cost') || name.includes('qty') || name.includes('quantity')) && typeof rows[0][c] === 'number';
-    }) || cols.find(c => typeof rows[0][c] === 'number');
+      return (name.includes('sales') || name.includes('revenue') || name.includes('profit') || name.includes('amount') || name.includes('price') || name.includes('cost')) && rows.length > 0 && typeof rows[0][c] === 'number';
+    }) || cols.find(c => {
+      const name = c.toLowerCase();
+      return (name.includes('qty') || name.includes('quantity')) && rows.length > 0 && typeof rows[0][c] === 'number';
+    }) || cols.find(c => rows.length > 0 && typeof rows[0][c] === 'number');
 
     const catCol = cols.find(c => {
       const name = c.toLowerCase();
-      return (name.includes('category') || name.includes('region') || name.includes('product') || name.includes('rep') || name.includes('type')) && typeof rows[0][c] === 'string';
-    }) || cols.find(c => typeof rows[0][c] === 'string');
+      return (name.includes('category') || name.includes('region') || name.includes('product') || name.includes('rep') || name.includes('type')) && rows.length > 0 && typeof rows[0][c] === 'string';
+    }) || cols.find(c => rows.length > 0 && typeof rows[0][c] === 'string');
 
     let sumVal = 0;
     let avgVal = 0;
@@ -289,24 +361,25 @@ export default function DashboardPage({
     }
 
     const uniqueCats = catCol ? new Set(rows.map(r => r[catCol])).size : 0;
+    const isCurrency = numericCol && ['sales', 'revenue', 'profit', 'amount', 'price', 'cost'].some(k => numericCol.toLowerCase().includes(k));
 
     return {
       primary: {
         label: numericCol ? `Total ${numericCol.replace(/_/g, ' ')}` : 'Total Records',
-        value: numericCol ? (sumVal > 1000 ? `$${Math.round(sumVal).toLocaleString()}` : sumVal.toLocaleString()) : datasetInfo.row_count?.toLocaleString(),
+        value: numericCol ? formatVal(sumVal, isCurrency) : (datasetInfo.row_count?.toLocaleString() || '0'),
         desc: `Calculated across ${datasetInfo.row_count?.toLocaleString()} active records`,
         badge: 'Primary Metric'
       },
       secondary: [
         {
           label: numericCol ? `Avg ${numericCol.replace(/_/g, ' ')}` : 'Data Columns',
-          value: numericCol ? `$${avgVal.toFixed(2)}` : `${datasetInfo.columns?.length} Cols`,
+          value: numericCol ? formatVal(avgVal, isCurrency) : `${cols.length} Cols`,
           icon: TrendUp,
           desc: 'Average metric value per record'
         },
         {
-          label: catCol ? `Unique ${catCol.replace(/_/g, ' ')}s` : 'Active Schema',
-          value: catCol ? uniqueCats.toLocaleString() : `${datasetInfo.columns?.length} Dimensions`,
+          label: catCol ? `Unique ${pluralizeCat(catCol)}` : 'Active Schema',
+          value: catCol ? uniqueCats.toLocaleString() : `${cols.length} Dimensions`,
           icon: ChartDonut,
           desc: 'Categorical dimension breakdown'
         },

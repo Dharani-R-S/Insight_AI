@@ -331,6 +331,95 @@ def call_llm(
         raise ValueError(f"{provider.upper()} request failed: {str(e)}")
 
 
+def is_out_of_bounds_query(question: str, schema: dict) -> tuple[bool, str]:
+    """
+    Check if user question is out of bounds (unrelated to dataset analytics, BI, or project data)
+    or is a conversational greeting/help request.
+    Returns (is_out: bool, response_message: str)
+    """
+    q_raw = question.strip()
+    q_lower = q_raw.lower()
+
+    # 1. Greetings and Conversational Intent Check
+    greetings = {
+        'hello', 'hi', 'hey', 'greetings', 'howdy', 'good morning', 'good afternoon', 'good evening',
+        'help', 'who are you', 'what can you do', 'how to use', 'what is insightai', 'what is this',
+        'thanks', 'thank you', 'ok', 'okay', 'cool', 'awesome'
+    }
+
+    words = re.findall(r'\b[a-z0-9]+\b', q_lower)
+    if not words or (len(words) <= 3 and any(w in greetings for w in words)):
+        return True, (
+            "CONVERSATIONAL: Hello! I am InsightAI, your dedicated Business Intelligence & Data Analytics assistant. "
+            "How can I help you analyze your dataset today? You can ask me to run custom queries, compare metrics, "
+            "generate visualizations, or uncover statistical trends across your data."
+        )
+
+    if q_lower in {'who are you', 'what can you do', 'what do you do', 'help me', 'how to use this', 'what is insightai'}:
+        return True, (
+            "CONVERSATIONAL: I am InsightAI, your dedicated Data Analytics & BI Assistant! "
+            "I can convert your natural language questions into accurate SQL queries, build dynamic charts, "
+            "compute statistical metrics, filter dataset records, and discover key insights. "
+            "Try asking questions like 'Show total sales per region' or 'Top 5 categories by count'."
+        )
+
+    # 2. Explicit Out-of-Bounds Triggers (Unrelated LLM generation tasks)
+    out_of_bounds_triggers = [
+        'write a poem', 'tell me a joke', 'who is the president', 'capital of', 'weather in',
+        'how to code', 'write a python script to', 'quicksort', 'fibonacci', 'recipe for',
+        'translate to', 'who won the', 'what is the meaning of life', 'write an essay',
+        'play a game', 'sing a song', 'story about', 'tell me about your model', 'create a game'
+    ]
+
+    for trigger in out_of_bounds_triggers:
+        if trigger in q_lower:
+            return True, (
+                "OUT_OF_BOUNDS: I am InsightAI, your dedicated Business Intelligence & Data Analytics assistant. "
+                "I can only answer questions related to your uploaded dataset, data analytics, visualizations, and project insights. "
+                "Please ask a question about your dataset (e.g., 'What are the top categories?' or 'Show average score by group')."
+            )
+
+    # 3. Comprehensive Data & BI Analytics Intent & Column Match
+    col_names = [str(col).lower() for col in schema.keys()] if schema else []
+
+    # Normalized schema column variations (spaces, underscores, special characters)
+    normalized_cols = set()
+    col_tokens = set()
+    for col in col_names:
+        normalized_cols.add(col)
+        normalized_cols.add(col.replace('_', ' '))
+        normalized_cols.add(re.sub(r'[^a-z0-9]', '', col))
+        for tok in col.replace('_', ' ').split():
+            if len(tok) > 2 and tok not in {'data', 'type', 'name', 'code', 'date', 'text'}:
+                col_tokens.add(tok)
+
+    data_terms = [
+        'select', 'show', 'find', 'get', 'list', 'top', 'bottom', 'average', 'avg', 'sum', 'count', 'max', 'min',
+        'total', 'distribution', 'percentage', 'breakdown', 'trend', 'sales', 'profit', 'quantity', 'category',
+        'region', 'discount', 'revenue', 'cost', 'amount', 'records', 'data', 'table', 'column', 'rows', 'chart',
+        'compare', 'difference', 'highest', 'lowest', 'where', 'by', 'per', 'group', 'all', 'how many', 'what',
+        'which', 'over time', 'correlation', 'rate', 'stats', 'summary', 'relationship', 'between', 'versus', 'vs',
+        'against', 'impact', 'effect', 'influence', 'plot', 'scatter', 'line', 'bar', 'pie', 'histogram', 'filter',
+        'order', 'sort', 'rank', 'median', 'mode', 'variance', 'std', 'deviation', 'most', 'least', 'score', 'rating',
+        'value', 'metric', 'dimension'
+    ]
+
+    has_term_match = any(term in q_lower for term in data_terms)
+    has_col_match = any(ncol in q_lower for ncol in normalized_cols if len(ncol) > 2)
+    has_token_match = any(tok in q_lower for tok in col_tokens)
+
+    has_data_intent = has_term_match or has_col_match or has_token_match
+
+    if not has_data_intent and len(words) > 4:
+        return True, (
+            "OUT_OF_BOUNDS: I am InsightAI, your dedicated Business Intelligence & Data Analytics assistant. "
+            "I can only answer questions related to your uploaded dataset, data analytics, visualizations, and project insights. "
+            "Please ask a question about your dataset (e.g., 'What are the top categories?' or 'Show average score by group')."
+        )
+
+    return False, ""
+
+
 def nl_to_sql(
     question: str,
     schema: dict,
@@ -340,15 +429,41 @@ def nl_to_sql(
     """
     Convert a natural language question to a SQL query using the configured LLM provider.
     """
+    # Guardrail check
+    is_out, refusal_msg = is_out_of_bounds_query(question, schema)
+    if is_out:
+        if refusal_msg.startswith("CONVERSATIONAL:") or refusal_msg.startswith("OUT_OF_BOUNDS:"):
+            return refusal_msg
+        return f"OUT_OF_BOUNDS: {refusal_msg}"
+
     # Fast path for common inspection queries
     q_norm = question.lower().strip().rstrip('.?!')
     if q_norm in {'show all data', 'show all', 'select all', 'show data', 'all data', 'show records', 'view all data', 'view data'}:
         return "SELECT * FROM data LIMIT 1000"
 
+    # Fast path for relationship / correlation queries between 2 columns
+    rel_match = re.search(r'(?:relationship|correlation|compare|vs|versus)\s+(?:between\s+)?(.+?)\s+(?:and|vs|versus|with)\s+(.+)', q_norm, re.IGNORECASE)
+    if rel_match and schema:
+        target1, target2 = rel_match.group(1).strip(), rel_match.group(2).strip()
+        col_map = {col.lower().replace('_', ' '): col for col in schema.keys()}
+        matched1 = col_map.get(target1)
+        matched2 = col_map.get(target2)
+        if not matched1:
+            for n_c, o_c in col_map.items():
+                if target1 in n_c or n_c in target1:
+                    matched1 = o_c
+                    break
+        if not matched2:
+            for n_c, o_c in col_map.items():
+                if target2 in n_c or n_c in target2:
+                    matched2 = o_c
+                    break
+        if matched1 and matched2 and matched1 != matched2:
+            return f'SELECT "{matched1}", "{matched2}" FROM data WHERE "{matched1}" IS NOT NULL AND "{matched2}" IS NOT NULL LIMIT 1000'
+
     # Fast path for compound 'show records where ...' queries (single or multi-condition)
     if q_norm.startswith('show records where '):
         conditions_str = question[len('show records where '):].strip()
-        # Parse patterns like col is 'val' or col = 'val' separated by 'and'
         parts = re.split(r'\s+and\s+', conditions_str, flags=re.IGNORECASE)
         where_clauses = []
         valid_compound = True
@@ -365,6 +480,15 @@ def nl_to_sql(
 
     schema_str = "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
 
+    # Include a sample row for better column value understanding
+    sample_str = ""
+    if sample_rows and len(sample_rows) > 0:
+        try:
+            import json as _json
+            sample_str = f"\nSAMPLE ROW (for context only):\n{_json.dumps(sample_rows[0], default=str)}\n"
+        except Exception:
+            pass
+
     prompt = f"""You are an expert SQL query generation agent for a Business Intelligence system.
 
 Your task is to convert Natural Language queries into correct and optimized SQL queries
@@ -374,8 +498,7 @@ DATABASE INFORMATION:
 Table name: data
 
 Columns and data types:
-{schema_str}
-
+{schema_str}{sample_str}
 STRICT SQL GENERATION RULES:
 1. Use WHERE only for direct row-level filters (e.g., phone_hours > 6 per individual row).
 2. Use GROUP BY when aggregation per category is required.
@@ -392,6 +515,8 @@ STRICT SQL GENERATION RULES:
 8. Only use columns that exist in the provided schema. Do not hallucinate column names.
 9. Return only valid SQL — no explanations, no markdown, no backticks, no semicolons.
 10. Use SQLite-compatible syntax.
+11. For "relationship between X and Y" or "correlation between X and Y" → use SELECT X, Y FROM data.
+12. For "top N X by Y" → SELECT X, SUM(Y) ... GROUP BY X ORDER BY SUM(Y) DESC LIMIT N.
 
 EXAMPLE:
 NL: "Find occupations where users use phones > 6 hours and have average stress above 7"
@@ -404,7 +529,8 @@ Convert the following Natural Language query into SQL:
     system_prompt = (
         "You are a SQL expert. Output ONLY a raw SQL SELECT query. "
         "No explanation, no markdown, no backticks, no semicolons. "
-        "Never place aggregate conditions (AVG, SUM, etc.) in WHERE — use HAVING exclusively."
+        "Never place aggregate conditions (AVG, SUM, etc.) in WHERE — use HAVING exclusively. "
+        "Never output multiple statements. Output a single SELECT query only."
     )
 
     sql = call_llm(
@@ -420,10 +546,24 @@ Convert the following Natural Language query into SQL:
     sql = re.sub(r'\n?```$', '', sql)
     sql = sql.strip()
 
+    # Strip any trailing non-SELECT statements (e.g., injected DROP TABLE)
+    # Keep only the first statement
+    statements = [s.strip() for s in re.split(r';', sql) if s.strip()]
+    if statements:
+        sql = statements[0]
+
+    # Ensure output is a SELECT or WITH (CTE) statement
+    sql_upper = sql.upper().lstrip()
+    if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
+        # LLM returned garbage — fall back to SELECT *
+        print(f"⚠️ LLM returned non-SELECT output, falling back. Raw: {sql[:80]}")
+        sql = "SELECT * FROM data LIMIT 100"
+
     # Clean trailing semicolons
-    sql = sql.rstrip(';')
+    sql = sql.rstrip(';').strip()
 
     # Fix WHERE/HAVING duplication
     sql = _fix_where_having_duplication(sql)
 
     return sql
+

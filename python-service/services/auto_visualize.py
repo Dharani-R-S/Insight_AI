@@ -26,18 +26,20 @@ def get_groq_client():
     return _groq_client
 
 
+def is_id_or_count_col(col_name: str) -> bool:
+    name = str(col_name).lower().strip()
+    return (
+        name.endswith('_id') or
+        name.startswith('id_') or
+        name in ['id', 'uuid', 'index', 'seq', 'sequence', 'no', 'number', 'code', 'row_id', 'ji_lu_shu', 'record_count', 'count', 'unnamed_0'] or
+        '_id_' in name
+    )
+
+
 def select_important_features(df: pd.DataFrame) -> Dict[str, List[str]]:
     """
     RULE 1: Select IMPORTANT features instead of sending all columns.
     Identify high-variance numeric and high-cardinality categorical columns.
-    
-    Returns:
-        {
-            "numeric_important": [...],  # Numeric columns with variance > 0
-            "categorical_important": [...],  # Categorical with 2-20 unique values
-            "all_numeric": [...],
-            "all_categorical": [...]
-        }
     """
     important = {
         "numeric_important": [],
@@ -47,21 +49,22 @@ def select_important_features(df: pd.DataFrame) -> Dict[str, List[str]]:
     }
     
     for col in df.columns:
+        if is_id_or_count_col(col):
+            continue
+
         dtype = df[col].dtype
         
         if pd.api.types.is_numeric_dtype(dtype):
             important["all_numeric"].append(col)
-            # Select numeric columns with reasonable variance
             series = pd.to_numeric(df[col], errors='coerce').dropna()
-            if len(series) > 0:
+            if len(series) > 0 and series.std() > 0:
                 variance = series.var()
-                if variance > 0 and not np.isinf(variance):  # Non-zero variance
+                if variance > 0 and not np.isinf(variance):
                     important["numeric_important"].append(col)
         else:
             important["all_categorical"].append(col)
-            # Select categorical columns with 2-20 unique values (good for grouping)
             unique_count = df[col].nunique()
-            if 2 <= unique_count <= 20:
+            if 2 <= unique_count <= 50:
                 important["categorical_important"].append(col)
     
     return important
@@ -125,36 +128,43 @@ def validate_recommendation(rec: Dict, important_features: Dict, df: pd.DataFram
     if y_axis and y_axis not in valid_columns:
         return False, f"❌ Column '{y_axis}' not found in dataset"
     
+    # If LLM recommended line chart with categorical x_axis, convert type to bar
+    if chart_type in ["line", "area"] and x_axis and not pd.api.types.is_numeric_dtype(df[x_axis]):
+        name_lower = str(x_axis).lower()
+        if not any(k in name_lower for k in ['date', 'time', 'year', 'month', 'period']):
+            rec["type"] = "bar"
+            chart_type = "bar"
+
     # Validate chart type matches data types
-    if chart_type in ["scatter", "line", "area"]:
-        # These need 2 numeric columns
+    if chart_type == "scatter":
         if not x_axis or not y_axis:
-            return False, f"❌ {chart_type.upper()} needs x_axis and y_axis defined"
+            return False, f"❌ SCATTER needs x_axis and y_axis defined"
         
         x_is_numeric = pd.api.types.is_numeric_dtype(df[x_axis])
         y_is_numeric = pd.api.types.is_numeric_dtype(df[y_axis])
         
         if not (x_is_numeric and y_is_numeric):
-            return False, f"❌ {chart_type.upper()} needs numeric columns, got {type(df[x_axis].dtype).__name__} and {type(df[y_axis].dtype).__name__}"
+            return False, f"❌ SCATTER needs numeric columns, got {type(df[x_axis].dtype).__name__} and {type(df[y_axis].dtype).__name__}"
     
-    elif chart_type == "bar":
-        # Bar chart: typically categorical x-axis, numeric y-axis
+    elif chart_type in ["bar", "line", "area"]:
         if not x_axis or not y_axis:
-            return False, f"❌ BAR chart needs x_axis and y_axis"
-        # Allow flexibility - can have numeric x-axis too
+            return False, f"❌ {chart_type.upper()} chart needs x_axis and y_axis"
     
     elif chart_type == "pie":
-        # Pie chart: categorical for labels, numeric for values
         if not x_axis:
             return False, f"❌ PIE chart needs x_axis (labels)"
     
     elif chart_type == "histogram":
-        # Histogram: single numeric column
         if not y_axis:
             return False, f"❌ HISTOGRAM needs y_axis (numeric column)"
         if not pd.api.types.is_numeric_dtype(df[y_axis]):
             return False, f"❌ HISTOGRAM needs numeric column, got {type(df[y_axis].dtype).__name__}"
     
+    # Title formatting
+    if rec.get("title"):
+        words = str(rec["title"]).split(' ')
+        rec["title"] = ' '.join([w.capitalize() if not w.isupper() else w for w in words])
+
     return True, "✅ Valid"
 
 

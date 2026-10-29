@@ -143,7 +143,7 @@ Do NOT invent, speculate, or add any information beyond what is provided above."
     @classmethod
     def generate_next_questions(
         cls,
-        schema_summary: Dict[str, Any],
+        schema_summary: Any,
         last_query: Optional[str] = None,
         last_sql: Optional[str] = None,
         last_result_columns: Optional[List[str]] = None,
@@ -155,7 +155,7 @@ Do NOT invent, speculate, or add any information beyond what is provided above."
         based on the dataset schema and the user's last query context.
 
         Args:
-            schema_summary:       Dict with columns, categorical_columns, numeric_columns, sample_values.
+            schema_summary:       Dict with columns/categorical_columns or raw text/summary str.
             last_query:           The user's most recent natural language question.
             last_sql:             The SQL that was last executed.
             last_result_columns:  Column names from the last result set.
@@ -166,28 +166,33 @@ Do NOT invent, speculate, or add any information beyond what is provided above."
             A list of exactly 3 follow-up question strings.
         """
         # Build schema context block
-        columns_desc = "\n".join(
-            f"  - {col} ({dtype})"
-            for col, dtype in schema_summary.get("columns", {}).items()
-        )
+        if isinstance(schema_summary, str):
+            schema_block = f"DATASET SCHEMA:\n{schema_summary}"
+        elif isinstance(schema_summary, dict):
+            columns_desc = "\n".join(
+                f"  - {col} ({dtype})"
+                for col, dtype in schema_summary.get("columns", {}).items()
+            )
 
-        categorical = schema_summary.get("categorical_columns", [])
-        numeric = schema_summary.get("numeric_columns", [])
-        sample_vals = schema_summary.get("sample_values", {})
+            categorical = schema_summary.get("categorical_columns", [])
+            numeric = schema_summary.get("numeric_columns", [])
+            sample_vals = schema_summary.get("sample_values", {})
 
-        schema_block = f"""DATASET SCHEMA:
+            schema_block = f"""DATASET SCHEMA:
 {columns_desc}
 
 Categorical columns: {', '.join(categorical) if categorical else 'None detected'}
 Numeric columns: {', '.join(numeric) if numeric else 'None detected'}
 Total rows: {schema_summary.get('row_count', 'unknown')}"""
 
-        if sample_vals:
-            samples_desc = "\n".join(
-                f"  {col}: {', '.join(vals[:3])}"
-                for col, vals in sample_vals.items()
-            )
-            schema_block += f"\n\nSample values for categorical columns:\n{samples_desc}"
+            if sample_vals:
+                samples_desc = "\n".join(
+                    f"  {col}: {', '.join(vals[:3])}"
+                    for col, vals in sample_vals.items()
+                )
+                schema_block += f"\n\nSample values for categorical columns:\n{samples_desc}"
+        else:
+            schema_block = "DATASET SCHEMA: Not provided"
 
         # Build last-query context block
         context_block = ""

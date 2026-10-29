@@ -162,6 +162,8 @@ def load_file_to_sqlite(file_path: str) -> dict:
 
     conn.close()
 
+    summary_stats = compute_dataset_summary_stats(df)
+
     return {
         "db_path": db_path,
         "table_name": "data",
@@ -169,6 +171,84 @@ def load_file_to_sqlite(file_path: str) -> dict:
         "schema": schema,
         "sample_rows": sample_rows,
         "row_count": row_count,
+        "summary_stats": summary_stats,
+    }
+
+
+def compute_dataset_summary_stats(df: pd.DataFrame) -> dict:
+    """
+    Compute comprehensive full-dataset statistics for Executive KPIs.
+    """
+    import numpy as np
+    row_count = len(df)
+    columns = list(df.columns)
+    
+    numeric_cols = []
+    for col in df.select_dtypes(include=[np.number]).columns:
+        col_lower = str(col).lower()
+        if not (col_lower.endswith('_id') or col_lower.startswith('id_') or col_lower in ['id', 'index', 'seq', 'ji_lu_shu', 'row_id']):
+            numeric_cols.append(col)
+            
+    def metric_priority(col_name):
+        n = str(col_name).lower()
+        if 'sales' in n: return 1
+        if 'revenue' in n: return 2
+        if 'profit' in n: return 3
+        if 'amount' in n: return 4
+        if 'price' in n: return 5
+        if 'cost' in n: return 6
+        if 'qty' in n or 'quantity' in n: return 7
+        return 10
+
+    numeric_cols_sorted = sorted(numeric_cols, key=metric_priority)
+    primary_col = numeric_cols_sorted[0] if numeric_cols_sorted else None
+    
+    primary_metric_info = None
+    if primary_col:
+        series = pd.to_numeric(df[primary_col], errors='coerce').dropna()
+        total_val = float(series.sum()) if len(series) > 0 else 0.0
+        avg_val = float(series.mean()) if len(series) > 0 else 0.0
+        
+        n_lower = str(primary_col).lower()
+        is_curr = any(k in n_lower for k in ['sales', 'revenue', 'profit', 'amount', 'price', 'cost', 'val', 'value'])
+        
+        primary_metric_info = {
+            "column": primary_col,
+            "label": primary_col.replace('_', ' ').title(),
+            "total": total_val,
+            "avg": avg_val,
+            "is_currency": is_curr
+        }
+
+    secondary_col = numeric_cols_sorted[1] if len(numeric_cols_sorted) > 1 else None
+    secondary_metric_info = None
+    if secondary_col:
+        series = pd.to_numeric(df[secondary_col], errors='coerce').dropna()
+        n_lower = str(secondary_col).lower()
+        secondary_metric_info = {
+            "column": secondary_col,
+            "label": secondary_col.replace('_', ' ').title(),
+            "total": float(series.sum()) if len(series) > 0 else 0.0,
+            "avg": float(series.mean()) if len(series) > 0 else 0.0,
+            "is_currency": any(k in n_lower for k in ['sales', 'revenue', 'profit', 'amount', 'price', 'cost'])
+        }
+
+    cat_cols = []
+    cat_summary = {}
+    for col in df.select_dtypes(include=['object', 'category']).columns:
+        col_lower = str(col).lower()
+        if not (col_lower.endswith('_id') or col_lower.startswith('id_') or col_lower in ['id', 'index', 'seq']):
+            cat_cols.append(col)
+            cat_summary[col] = int(df[col].nunique())
+
+    return {
+        "row_count": row_count,
+        "column_count": len(columns),
+        "primary_metric": primary_metric_info,
+        "secondary_metric": secondary_metric_info,
+        "categorical_counts": cat_summary,
+        "numeric_columns": numeric_cols,
+        "categorical_columns": cat_cols
     }
 
 
@@ -214,7 +294,7 @@ def export_dataset_from_sqlite(db_path: str, export_format: str = "csv", base_fi
 
 
 def get_schema(db_path: str) -> dict:
-    """Get schema information from an existing SQLite database."""
+    """Get schema information and summary stats from an existing SQLite database."""
     conn = sqlite3.connect(db_path)
     cursor = conn.execute("PRAGMA table_info(data)")
     columns_info = cursor.fetchall()
@@ -223,12 +303,14 @@ def get_schema(db_path: str) -> dict:
     for col_info in columns_info:
         schema[col_info[1]] = col_info[2]
 
-    # Get sample rows
-    df = pd.read_sql("SELECT * FROM data LIMIT 5", conn)
-    sample_rows = json.loads(df.to_json(orient='records'))
+    # Get sample rows and full dataframe summary stats
+    full_df = pd.read_sql("SELECT * FROM data", conn)
+    sample_df = full_df.head(5)
+    sample_rows = json.loads(sample_df.to_json(orient='records'))
+    summary_stats = compute_dataset_summary_stats(full_df)
 
     conn.close()
-    return {"schema": schema, "sample_rows": sample_rows}
+    return {"schema": schema, "sample_rows": sample_rows, "summary_stats": summary_stats}
 
 
 def validate_sql(sql: str) -> bool:

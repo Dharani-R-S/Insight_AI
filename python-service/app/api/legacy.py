@@ -264,6 +264,35 @@ async def analyze_data(request: AnalyzeRequest):
         # Step 1: NL → SQL via Groq
         print(f"🧠 Converting to SQL: \"{question}\"")
         sql_query = nl_to_sql(question, schema, sample_rows)
+
+        if sql_query.startswith("CONVERSATIONAL:"):
+            msg = sql_query.replace("CONVERSATIONAL:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "conversational": True,
+                "out_of_bounds": False,
+                "message": msg
+            }
+
+        if sql_query.startswith("OUT_OF_BOUNDS:"):
+            msg = sql_query.replace("OUT_OF_BOUNDS:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "out_of_bounds": True,
+                "conversational": False,
+                "message": msg
+            }
+
         result["sql_query"] = sql_query
         print(f"📝 SQL: {sql_query}")
 

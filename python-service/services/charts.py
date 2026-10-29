@@ -59,6 +59,10 @@ def detect_chart_type(df: pd.DataFrame) -> str:
     if len(cols) == 1 and len(num_cols) == 1:
         return 'histogram'
 
+    # Two or more numeric columns with no categorical column → scatter plot
+    if len(num_cols) >= 2 and len(non_num_cols) == 0:
+        return 'scatter'
+
     if len(cols) >= 2:
         # Always use the categorical column as the x-axis for type detection
         x_col, _, _ = _resolve_axes(df)

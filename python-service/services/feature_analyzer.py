@@ -276,27 +276,61 @@ Only suggest column pairs that make sense together.
         unique = []
         
         for rec in recs:
-            key = (rec['type'], tuple(sorted(rec['features'])))
+            sanitized = self._sanitize_recommendation(rec, df)
+            key = (sanitized['type'], tuple(sorted(sanitized.get('features', []))))
             if key not in seen:
                 seen.add(key)
-                unique.append(rec)
+                unique.append(sanitized)
         
         return unique
+
+    def _sanitize_recommendation(self, rec: Dict, df: pd.DataFrame) -> Dict:
+        rec = dict(rec)
+        t = str(rec.get('type', 'bar')).lower()
+        x = rec.get('x_axis')
+        
+        datetime_cols = self._get_datetime_columns(df)
+        
+        # Line and area charts require time-series or numeric ordered x-axis
+        if t in ['line', 'area']:
+            if x and x not in datetime_cols and not (x in df.columns and pd.api.types.is_numeric_dtype(df[x])):
+                if datetime_cols:
+                    rec['x_axis'] = datetime_cols[0]
+                    rec['features'] = [datetime_cols[0], rec.get('y_axis')]
+                else:
+                    rec['type'] = 'bar'
+                    
+        # Capitalize title nicely
+        if 'title' in rec and rec['title']:
+            words = str(rec['title']).split(' ')
+            rec['title'] = ' '.join([w.capitalize() if not w.isupper() else w for w in words])
+            
+        return rec
     
     def _is_id_column(self, col_name: str) -> bool:
-        """Check if column is an identifier key rather than a quantitative metric."""
+        """Check if column is an identifier key or non-informative record count."""
         name = str(col_name).lower().strip()
         return (
             name.endswith('_id') or 
+            name.endswith(' id') or 
             name.startswith('id_') or 
-            name in ['id', 'uuid', 'index', 'seq', 'sequence', 'no', 'number', 'code', 'row_id'] or 
-            '_id_' in name
+            name.startswith('id ') or 
+            name in ['id', 'uuid', 'index', 'seq', 'sequence', 'no', 'number', 'code', 'row_id', 'row id', 'ji_lu_shu', 'record_count', 'count', 'unnamed_0'] or 
+            '_id_' in name or 
+            ' id ' in name
         )
 
     def _get_numeric_columns(self, df: pd.DataFrame) -> List[str]:
-        """Get quantitative numeric columns (excluding identifier keys)"""
+        """Get quantitative numeric columns (excluding identifier keys and 0-variance columns)"""
         cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        return [c for c in cols if not self._is_id_column(c)]
+        valid = []
+        for c in cols:
+            if self._is_id_column(c):
+                continue
+            series = pd.to_numeric(df[c], errors='coerce').dropna()
+            if len(series) > 0 and series.std() > 0:
+                valid.append(c)
+        return valid
 
     def _get_categorical_columns(self, df: pd.DataFrame) -> List[str]:
         """Get categorical columns (excluding identifier keys)"""
@@ -304,9 +338,11 @@ Only suggest column pairs that make sense together.
         return [c for c in cols if not self._is_id_column(c)]
 
     def _get_datetime_columns(self, df: pd.DataFrame) -> List[str]:
-        """Get datetime columns"""
+        """Get datetime columns (excluding identifier keys)"""
         datetime_cols = []
         for col in df.columns:
+            if self._is_id_column(col):
+                continue
             name = str(col).lower().strip()
             if 'date' in name or 'time' in name or 'year' in name or 'month' in name or 'timestamp' in name:
                 datetime_cols.append(col)
@@ -315,8 +351,8 @@ Only suggest column pairs that make sense together.
                 datetime_cols.append(col)
             elif df[col].dtype == 'object':
                 try:
-                    pd.to_datetime(df[col], errors='coerce')
-                    if df[col].notna().sum() > len(df) * 0.5:
+                    dt_series = pd.to_datetime(df[col], errors='coerce')
+                    if dt_series.notna().sum() > len(df) * 0.5:
                         datetime_cols.append(col)
                 except:
                     pass
