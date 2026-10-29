@@ -170,8 +170,13 @@ function startPythonService() {
     });
   } else {
     const pyScript = path.join(rootDir, 'python-service', 'main.py');
+    const venvPythonWin = path.join(rootDir, 'python-service', '.venv', 'Scripts', 'python.exe');
+    const venvPythonPosix = path.join(rootDir, 'python-service', '.venv', 'bin', 'python');
+    const pythonCmd = fs.existsSync(venvPythonWin)
+      ? venvPythonWin
+      : (fs.existsSync(venvPythonPosix) ? venvPythonPosix : 'python');
     log(`Spawning python script: ${pyScript}`);
-    pythonProcess = spawn('python', [pyScript], {
+    pythonProcess = spawn(pythonCmd, [pyScript], {
       cwd: path.join(rootDir, 'python-service'),
       env: pyEnv,
       windowsHide: true,

@@ -67,6 +67,18 @@ class MetricStore(BaseVisModel):
         lower = col_name.lower().strip()
         formatted_label = " ".join([word.capitalize() for word in lower.replace("_", " ").split()])
 
+        # Percentage Patterns (evaluated before currency to catch things like profit_margin_pct, discount_rate)
+        pct_keywords = ["rate", "pct", "percent", "percentage", "margin", "ratio", "score_pct", "growth", "churn", "retention"]
+        if any(k in lower for k in pct_keywords):
+            return SemanticMetric(
+                name=col_name,
+                label=f"{formatted_label} (%)",
+                format_type=MetricFormat.PERCENTAGE,
+                unit="%",
+                suffix="%",
+                decimals=1,
+            )
+
         # Currency Patterns
         currency_keywords = ["revenue", "sales", "price", "cost", "salary", "spend", "budget", "profit", "amount", "total_val", "discount", "fee", "income", "usd", "tax"]
         if any(k in lower for k in currency_keywords):
@@ -77,18 +89,6 @@ class MetricStore(BaseVisModel):
                 unit="$",
                 prefix="$",
                 decimals=2,
-            )
-
-        # Percentage Patterns
-        pct_keywords = ["rate", "pct", "percent", "percentage", "margin", "ratio", "score_pct", "growth", "churn", "retention"]
-        if any(k in lower for k in pct_keywords):
-            return SemanticMetric(
-                name=col_name,
-                label=f"{formatted_label} (%)",
-                format_type=MetricFormat.PERCENTAGE,
-                unit="%",
-                suffix="%",
-                decimals=1,
             )
 
         # Count / Quantity Patterns

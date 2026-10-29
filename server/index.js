@@ -507,6 +507,33 @@ app.post('/api/transform/apply', async (req, res) => {
   }
 });
 
+// ─── Vectorized Transform (Phase 3), Auto-Visualize (Phase 4) & Intelligence (Phase 5) Proxies ───
+const proxyToPython = async (req, res, targetPath) => {
+  try {
+    const headers = {};
+    if (req.headers.authorization) headers.authorization = req.headers.authorization;
+    const pyRes = await axios({
+      method: req.method,
+      url: `${PYTHON_URL}${targetPath}`,
+      data: req.body,
+      params: req.query,
+      headers,
+      timeout: 60000,
+    });
+    res.status(pyRes.status).json(pyRes.data);
+  } catch (err) {
+    console.error(`Proxy error for ${targetPath}:`, err.response?.data || err.message);
+    res.status(err.response?.status || 500).json(err.response?.data || { error: err.message });
+  }
+};
+
+app.post('/api/transform/compile', (req, res) => proxyToPython(req, res, '/api/transform/compile'));
+app.post('/api/transform/preview', (req, res) => proxyToPython(req, res, '/api/transform/preview'));
+app.post('/api/transform/commit', (req, res) => proxyToPython(req, res, '/api/transform/commit'));
+app.post('/api/visualize/auto', (req, res) => proxyToPython(req, res, '/api/visualize/auto'));
+app.post('/api/intelligence/root-cause', (req, res) => proxyToPython(req, res, '/api/intelligence/root-cause'));
+app.post('/api/intelligence/next-questions', (req, res) => proxyToPython(req, res, '/api/intelligence/next-questions'));
+
 // ─── POST /api/datasets/auto-visualize (protected) ───
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
   try {
