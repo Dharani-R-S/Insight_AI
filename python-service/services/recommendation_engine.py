@@ -166,16 +166,27 @@ Do NOT invent, speculate, or add any information beyond what is provided above."
             A list of exactly 3 follow-up question strings.
         """
         # Build schema context block
+        categorical: List[str] = []
+        numeric: List[str] = []
+
         if isinstance(schema_summary, str):
             schema_block = f"DATASET SCHEMA:\n{schema_summary}"
+            # Extract column names and types from string schema representation
+            # e.g., "Columns: revenue (DOUBLE), region (VARCHAR), category (VARCHAR)"
+            for col, dtype in re.findall(r'(\b[\w_]+\b)\s*[\(:]\s*([A-Za-z0-9_]+)\)?', schema_summary):
+                dtype_upper = dtype.upper()
+                if any(t in dtype_upper for t in ['INT', 'FLOAT', 'DOUBLE', 'REAL', 'DECIMAL', 'NUMERIC', 'BIGINT']):
+                    numeric.append(col)
+                elif any(t in dtype_upper for t in ['CHAR', 'STR', 'TEXT', 'VARCHAR']):
+                    categorical.append(col)
         elif isinstance(schema_summary, dict):
             columns_desc = "\n".join(
                 f"  - {col} ({dtype})"
                 for col, dtype in schema_summary.get("columns", {}).items()
             )
 
-            categorical = schema_summary.get("categorical_columns", [])
-            numeric = schema_summary.get("numeric_columns", [])
+            categorical = list(schema_summary.get("categorical_columns", []))
+            numeric = list(schema_summary.get("numeric_columns", []))
             sample_vals = schema_summary.get("sample_values", {})
 
             schema_block = f"""DATASET SCHEMA:

@@ -64,7 +64,9 @@ def detect_trends(df: pd.DataFrame) -> list[str]:
     return trends
 
 
-def generate_insights(df: pd.DataFrame, stats: dict) -> list[str]:
+def generate_insights(df: pd.DataFrame, stats: dict = None) -> list[str]:
+    if stats is None:
+        stats = {}
     """
     Generate auto-insight statements from the data and statistics.
 
@@ -88,21 +90,25 @@ def generate_insights(df: pd.DataFrame, stats: dict) -> list[str]:
             y = pd.to_numeric(df[numeric_cols[1]], errors='coerce').dropna()
             common_idx = x.index.intersection(y.index)
             if len(common_idx) >= 5:
-                corr = float(np.corrcoef(x[common_idx], y[common_idx])[0, 1])
-                lbl_x = numeric_cols[0].replace('_', ' ').title()
-                lbl_y = numeric_cols[1].replace('_', ' ').title()
-                strength = (
-                    "strong positive" if corr >= 0.7 else
-                    "moderate positive" if corr >= 0.4 else
-                    "weak positive" if corr > 0.1 else
-                    "strong negative" if corr <= -0.7 else
-                    "moderate negative" if corr <= -0.4 else
-                    "weak negative" if corr < -0.1 else
-                    "negligible"
-                )
-                insights.append(
-                    f"{lbl_x} and {lbl_y} show a {strength} correlation (r = {corr:.2f})."
-                )
+                x_vals = x[common_idx]
+                y_vals = y[common_idx]
+                if x_vals.nunique() > 1 and y_vals.nunique() > 1:
+                    corr = float(np.corrcoef(x_vals, y_vals)[0, 1])
+                    if not np.isnan(corr) and not np.isinf(corr):
+                        lbl_x = numeric_cols[0].replace('_', ' ').title()
+                        lbl_y = numeric_cols[1].replace('_', ' ').title()
+                        strength = (
+                            "strong positive" if corr >= 0.7 else
+                            "moderate positive" if corr >= 0.4 else
+                            "weak positive" if corr > 0.1 else
+                            "strong negative" if corr <= -0.7 else
+                            "moderate negative" if corr <= -0.4 else
+                            "weak negative" if corr < -0.1 else
+                            "negligible"
+                        )
+                        insights.append(
+                            f"{lbl_x} and {lbl_y} show a {strength} correlation (r = {corr:.2f})."
+                        )
         except Exception:
             pass
 

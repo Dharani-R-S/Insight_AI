@@ -35,9 +35,21 @@ def _resolve_axes(df: pd.DataFrame):
     num_cols = df.select_dtypes(include='number').columns.tolist()
     non_num_cols = [c for c in cols if c not in num_cols]
 
-    # Prefer a text/categorical column as the x-axis label
-    x_col = non_num_cols[0] if non_num_cols else cols[0]
-    y_cols = num_cols if num_cols else [c for c in cols if c != x_col]
+    # Prefer a text/categorical column as the x-axis label.
+    # If all columns are numeric, prefer a time/year column as x-axis.
+    time_col = None
+    if not non_num_cols:
+        for c in num_cols:
+            c_lower = str(c).lower()
+            if any(k in c_lower for k in ['year', 'yr', 'date', 'time']):
+                time_col = c
+                break
+            vals = pd.to_numeric(df[c], errors='coerce').dropna()
+            if len(vals) > 0 and vals.between(1800, 2100).all() and (vals == vals.round()).all():
+                time_col = c
+                break
+    x_col = non_num_cols[0] if non_num_cols else (time_col or cols[0])
+    y_cols = [c for c in num_cols if c != x_col] if num_cols else [c for c in cols if c != x_col]
     return x_col, y_cols, non_num_cols
 
 
@@ -60,8 +72,20 @@ def detect_chart_type(df: pd.DataFrame) -> str:
         return 'histogram'
 
     # Two or more numeric columns with no categorical column → scatter plot
+    # BUT if one column represents a time dimension (e.g. year, release_year), choose line chart
     if len(num_cols) >= 2 and len(non_num_cols) == 0:
-        return 'scatter'
+        time_col = None
+        for c in num_cols:
+            c_lower = str(c).lower()
+            if any(k in c_lower for k in ['year', 'yr', 'date', 'time']):
+                time_col = c
+                break
+            vals = pd.to_numeric(df[c], errors='coerce').dropna()
+            if len(vals) > 0 and vals.between(1800, 2100).all() and (vals == vals.round()).all():
+                time_col = c
+                break
+        if not time_col:
+            return 'scatter'
 
     if len(cols) >= 2:
         # Always use the categorical column as the x-axis for type detection

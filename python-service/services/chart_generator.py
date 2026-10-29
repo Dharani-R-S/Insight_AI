@@ -176,15 +176,29 @@ def generate_line(df: pd.DataFrame, x_col: str, y_col: str, rec: Dict) -> Dict:
         # Try parsing x_col as date if applicable
         x_col_str = str(x_col).lower()
         if any(k in x_col_str for k in ['date', 'time', 'year', 'month', 'period', 'timestamp']):
-            df_copy['parsed_date'] = pd.to_datetime(df_copy[x_col], errors='coerce')
-            if df_copy['parsed_date'].notna().sum() > len(df_copy) * 0.3:
-                df_copy['date_str'] = df_copy['parsed_date'].dt.strftime('%Y-%m')
+            # Prevent 4-digit calendar years from being parsed as epoch nanoseconds (Jan 1970)
+            numeric_s = pd.to_numeric(df_copy[x_col], errors='coerce')
+            valid_numeric = numeric_s.dropna()
+            is_calendar_year = (
+                len(valid_numeric) > len(df_copy) * 0.5 and
+                valid_numeric.between(1800, 2100).all() and
+                (valid_numeric == valid_numeric.round()).all()
+            )
+            if is_calendar_year:
+                df_copy['date_str'] = valid_numeric.astype(int).astype(str)
                 grouped = df_copy.groupby('date_str')[y_col].sum().reset_index()
                 grouped = grouped.sort_values('date_str')
                 x_key = 'date_str'
             else:
-                grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
-                x_key = x_col
+                parsed = pd.to_datetime(df_copy[x_col].astype(str), errors='coerce')
+                if parsed.notna().sum() > len(df_copy) * 0.3:
+                    df_copy['date_str'] = parsed.dt.strftime('%Y-%m')
+                    grouped = df_copy.groupby('date_str')[y_col].sum().reset_index()
+                    grouped = grouped.sort_values('date_str')
+                    x_key = 'date_str'
+                else:
+                    grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
+                    x_key = x_col
         else:
             grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
             x_key = x_col

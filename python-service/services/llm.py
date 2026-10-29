@@ -347,7 +347,25 @@ def is_out_of_bounds_query(question: str, schema: dict) -> tuple[bool, str]:
         'thanks', 'thank you', 'ok', 'okay', 'cool', 'awesome'
     }
 
+    q_clean = re.sub(r'[^\w\s]', '', q_lower).strip()
     words = re.findall(r'\b[a-z0-9]+\b', q_lower)
+
+    # 1a. Direct whole-phrase or greeting match
+    if q_clean in greetings or (len(words) <= 4 and any(g in q_clean for g in greetings if ' ' in g)):
+        if q_clean in {'who are you', 'what can you do', 'what do you do', 'help me', 'how to use this', 'what is insightai', 'how to use'}:
+            return True, (
+                "CONVERSATIONAL: I am InsightAI, your dedicated Data Analytics & BI Assistant! "
+                "I can convert your natural language questions into accurate SQL queries, build dynamic charts, "
+                "compute statistical metrics, filter dataset records, and discover key insights. "
+                "Try asking questions like 'Show total sales per region' or 'Top 5 categories by count'."
+            )
+        return True, (
+            "CONVERSATIONAL: Hello! I am InsightAI, your dedicated Business Intelligence & Data Analytics assistant. "
+            "How can I help you analyze your dataset today? You can ask me to run custom queries, compare metrics, "
+            "generate visualizations, or uncover statistical trends across your data."
+        )
+
+    # 1b. Single/few word token greeting check
     if not words or (len(words) <= 3 and any(w in greetings for w in words)):
         return True, (
             "CONVERSATIONAL: Hello! I am InsightAI, your dedicated Business Intelligence & Data Analytics assistant. "
@@ -397,10 +415,10 @@ def is_out_of_bounds_query(question: str, schema: dict) -> tuple[bool, str]:
         'select', 'show', 'find', 'get', 'list', 'top', 'bottom', 'average', 'avg', 'sum', 'count', 'max', 'min',
         'total', 'distribution', 'percentage', 'breakdown', 'trend', 'sales', 'profit', 'quantity', 'category',
         'region', 'discount', 'revenue', 'cost', 'amount', 'records', 'data', 'table', 'column', 'rows', 'chart',
-        'compare', 'difference', 'highest', 'lowest', 'where', 'by', 'per', 'group', 'all', 'how many', 'what',
-        'which', 'over time', 'correlation', 'rate', 'stats', 'summary', 'relationship', 'between', 'versus', 'vs',
+        'compare', 'difference', 'highest', 'lowest', 'group by', 'order by', 'how many',
+        'over time', 'correlation', 'rate', 'stats', 'summary', 'relationship', 'between', 'versus', 'vs',
         'against', 'impact', 'effect', 'influence', 'plot', 'scatter', 'line', 'bar', 'pie', 'histogram', 'filter',
-        'order', 'sort', 'rank', 'median', 'mode', 'variance', 'std', 'deviation', 'most', 'least', 'score', 'rating',
+        'sort', 'rank', 'median', 'mode', 'variance', 'std', 'deviation', 'most', 'least', 'score', 'rating',
         'value', 'metric', 'dimension'
     ]
 
@@ -418,6 +436,41 @@ def is_out_of_bounds_query(question: str, schema: dict) -> tuple[bool, str]:
         )
 
     return False, ""
+
+
+def _sanitize_sample_value(val: Any) -> Any:
+    if val is None:
+        return None
+    val_str = str(val).strip()
+    if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', val_str):
+        return "[REDACTED_EMAIL]"
+    if re.search(r'^\+?[\d\s\-\(\)]{7,20}$', val_str) and len(re.findall(r'\d', val_str)) >= 7:
+        return "[REDACTED_PHONE]"
+    if re.search(r'^\d{3}-\d{2}-\d{4}$', val_str):
+        return "[REDACTED_SSN]"
+    if re.search(r'^\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}$', val_str):
+        return "[REDACTED_CARD]"
+    return val
+
+
+def _sanitize_sample_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    sensitive_keys = {
+        'password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'key', 'auth',
+        'ssn', 'social_security', 'national_id', 'tax_id', 'ein', 'pan', 'aadhaar',
+        'phone', 'mobile', 'telephone', 'tel', 'cell',
+        'email', 'mail', 'e_mail',
+        'address', 'street', 'zip', 'postal', 'zipcode',
+        'credit_card', 'card_number', 'cc_num', 'cvv', 'iban', 'account_number', 'account_num',
+        'salary', 'wage', 'compensation'
+    }
+    sanitized = {}
+    for k, v in row.items():
+        k_lower = str(k).lower().replace(' ', '_')
+        if any(sk in k_lower for sk in sensitive_keys):
+            sanitized[k] = "[REDACTED]"
+        else:
+            sanitized[k] = _sanitize_sample_value(v)
+    return sanitized
 
 
 def nl_to_sql(
@@ -480,12 +533,18 @@ def nl_to_sql(
 
     schema_str = "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
 
-    # Include a sample row for better column value understanding
+    # Privacy protection: Only include sample row if explicitly opted in via llm_config or env,
+    # and sanitize/redact PII and sensitive values before transmission.
     sample_str = ""
-    if sample_rows and len(sample_rows) > 0:
+    allow_sample_rows = (
+        (llm_config and llm_config.get("allow_sample_rows", False))
+        or os.environ.get("INSIGHTAI_ALLOW_SAMPLE_ROWS", "").lower() in {"true", "1"}
+    )
+    if allow_sample_rows and sample_rows and len(sample_rows) > 0:
         try:
             import json as _json
-            sample_str = f"\nSAMPLE ROW (for context only):\n{_json.dumps(sample_rows[0], default=str)}\n"
+            sanitized_row = _sanitize_sample_row(sample_rows[0])
+            sample_str = f"\nSAMPLE ROW (for context only):\n{_json.dumps(sanitized_row, default=str)}\n"
         except Exception:
             pass
 

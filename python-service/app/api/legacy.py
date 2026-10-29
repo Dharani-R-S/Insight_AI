@@ -151,6 +151,9 @@ async def clean_data(request: CleanDataRequest):
         sample_df = df.head(5)
         sample_rows = sample_df.to_dict(orient='records')
         row_count = len(df)
+
+        from services.database import compute_dataset_summary_stats
+        summary_stats = compute_dataset_summary_stats(df)
         conn.close()
 
         print(f"🧹 Cleaned dataset ({db_path}): {initial_rows} -> {row_count} rows, {initial_cols} -> {len(columns)} cols")
@@ -162,6 +165,7 @@ async def clean_data(request: CleanDataRequest):
             "schema": schema,
             "sample_rows": sample_rows,
             "row_count": row_count,
+            "summary_stats": summary_stats,
             "cleaned_summary": {
                 "rows_removed": initial_rows - row_count,
                 "cols_removed": initial_cols - len(columns),

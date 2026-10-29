@@ -200,6 +200,23 @@ def compute_dataset_summary_stats(df: pd.DataFrame) -> dict:
         if 'qty' in n or 'quantity' in n: return 7
         return 10
 
+    total_cells = int(df.size)
+    non_null_cells = int(df.notna().sum().sum())
+    completeness_pct = round((non_null_cells / total_cells * 100), 1) if total_cells > 0 else 100.0
+
+    pct_keywords = ['pct', 'percent', 'percentage', 'rate', 'ratio', 'margin', 'growth', 'churn', 'score_pct']
+    curr_keywords = ['sales', 'revenue', 'profit', 'amount', 'price', 'cost', 'val', 'value', 'salary', 'spend', 'budget', 'income']
+
+    def check_pct(col_name: str) -> bool:
+        lower = str(col_name).lower()
+        return any(k in lower for k in pct_keywords)
+
+    def check_curr(col_name: str) -> bool:
+        lower = str(col_name).lower()
+        if check_pct(col_name):
+            return False
+        return any(k in lower for k in curr_keywords)
+
     numeric_cols_sorted = sorted(numeric_cols, key=metric_priority)
     primary_col = numeric_cols_sorted[0] if numeric_cols_sorted else None
     
@@ -209,28 +226,26 @@ def compute_dataset_summary_stats(df: pd.DataFrame) -> dict:
         total_val = float(series.sum()) if len(series) > 0 else 0.0
         avg_val = float(series.mean()) if len(series) > 0 else 0.0
         
-        n_lower = str(primary_col).lower()
-        is_curr = any(k in n_lower for k in ['sales', 'revenue', 'profit', 'amount', 'price', 'cost', 'val', 'value'])
-        
         primary_metric_info = {
             "column": primary_col,
             "label": primary_col.replace('_', ' ').title(),
             "total": total_val,
             "avg": avg_val,
-            "is_currency": is_curr
+            "is_percentage": check_pct(primary_col),
+            "is_currency": check_curr(primary_col)
         }
 
     secondary_col = numeric_cols_sorted[1] if len(numeric_cols_sorted) > 1 else None
     secondary_metric_info = None
     if secondary_col:
         series = pd.to_numeric(df[secondary_col], errors='coerce').dropna()
-        n_lower = str(secondary_col).lower()
         secondary_metric_info = {
             "column": secondary_col,
             "label": secondary_col.replace('_', ' ').title(),
             "total": float(series.sum()) if len(series) > 0 else 0.0,
             "avg": float(series.mean()) if len(series) > 0 else 0.0,
-            "is_currency": any(k in n_lower for k in ['sales', 'revenue', 'profit', 'amount', 'price', 'cost'])
+            "is_percentage": check_pct(secondary_col),
+            "is_currency": check_curr(secondary_col)
         }
 
     cat_cols = []
@@ -244,6 +259,9 @@ def compute_dataset_summary_stats(df: pd.DataFrame) -> dict:
     return {
         "row_count": row_count,
         "column_count": len(columns),
+        "total_cells": total_cells,
+        "non_null_cells": non_null_cells,
+        "completeness_pct": completeness_pct,
         "primary_metric": primary_metric_info,
         "secondary_metric": secondary_metric_info,
         "categorical_counts": cat_summary,

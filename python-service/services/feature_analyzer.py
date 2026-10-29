@@ -186,7 +186,7 @@ Only suggest column pairs that make sense together.
             
             # Merge and deduplicate
             all_recs = rule_recs + additional_recs
-            unique_recs = self._deduplicate_recommendations(all_recs)
+            unique_recs = self._deduplicate_recommendations(all_recs, df)
             
             return sorted(unique_recs, key=lambda x: x['confidence'], reverse=True)
         
@@ -270,7 +270,7 @@ Only suggest column pairs that make sense together.
                 cols.append(col)
         return cols[:2]  # Max 2 columns
     
-    def _deduplicate_recommendations(self, recs: List[Dict]) -> List[Dict]:
+    def _deduplicate_recommendations(self, recs: List[Dict], df: pd.DataFrame) -> List[Dict]:
         """Remove duplicate recommendations"""
         seen = set()
         unique = []
