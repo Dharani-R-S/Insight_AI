@@ -15,7 +15,7 @@ import KnowledgeGraph from './components/KnowledgeGraph';
 import SettingsModal from './components/SettingsModal';
 import DataTransformStudio from './components/DataTransformStudio';
 import PostUploadTransformModal from './components/PostUploadTransformModal';
-import { Broom, DownloadSimple, CaretDown, Sparkle, MagnifyingGlass, X, List } from '@phosphor-icons/react';
+import { Broom, DownloadSimple, CaretDown, Sparkle, MagnifyingGlass, X, List, ArrowCounterClockwise } from '@phosphor-icons/react';
 import { downloadTransformedDataset } from './utils/exportUtils';
 
 function authFetch(url, options = {}) {
@@ -147,6 +147,54 @@ export default function App() {
     setActivePage('dashboard');
   };
 
+  const handleCleanSuccess = async (cleanResult) => {
+    if (!cleanResult) return;
+    setDatasetInfo((prev) => ({
+      ...prev,
+      row_count: cleanResult.summary?.final_rows ?? prev?.row_count,
+      quality_profile: cleanResult.cleaned_profile,
+      is_cleaned: true,
+    }));
+    try {
+      const res = await authFetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: 'Show all data' }),
+      });
+      const result = await res.json();
+      setFullData(result.table_result || cleanResult.cleaned_profile?.sample_rows);
+    } catch {
+      // Keep existing data
+    }
+  };
+
+  const handleRevertOriginal = async () => {
+    try {
+      const res = await authFetch('/api/datasets/revert-original', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Revert failed');
+      setDatasetInfo((prev) => ({
+        ...prev,
+        row_count: result.row_count,
+        is_cleaned: false,
+        quality_profile: null,
+      }));
+      const askRes = await authFetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: 'Show all data' }),
+      });
+      const askData = await askRes.json();
+      setFullData(askData.table_result || []);
+    } catch (err) {
+      console.error('Revert error:', err);
+      alert('Failed to revert dataset: ' + (err.message || 'Error occurred'));
+    }
+  };
+
   const handleUploadSuccess = async (data) => {
     setDatasetInfo(data);
     setMessages([{
@@ -269,6 +317,26 @@ export default function App() {
     setNlFilterRows(null);
     setNlFilterActive(null);
     setNlFilterInput('');
+  };
+
+  const handleResetToFullData = async () => {
+    setResults(null);
+    setNlFilterRows(null);
+    setNlFilterActive(null);
+    setNlFilterInput('');
+    if (!fullData || fullData.length === 0) {
+      try {
+        const res = await authFetch('/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: 'Show all data' }),
+        });
+        const data = await res.json();
+        if (data.table_result) {
+          setFullData(data.table_result);
+        }
+      } catch {}
+    }
   };
 
   const handleOpenSavedVisualization = (saved) => {
@@ -450,17 +518,39 @@ export default function App() {
               <div>
                 <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Data Browser</h2>
                 <p className="text-[10px] text-[var(--color-text-muted)]">
-                  {nlFilterActive
-                    ? `Showing ${nlFilterRows?.length ?? 0} results matching "${nlFilterActive}"`
-                    : table_result?.length
-                      ? `Showing ${table_result.length} query results`
-                      : fullData?.length
-                        ? `${fullData.length.toLocaleString()} rows loaded — click any column header to profile it`
-                        : 'No data'}
+                  {nlFilterActive ? (
+                    <span>
+                      Showing {nlFilterRows?.length ?? 0} results matching "{nlFilterActive}" •{' '}
+                      <button onClick={handleResetToFullData} className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer">
+                        Reset to full table ({fullData?.length?.toLocaleString() || datasetInfo?.row_count?.toLocaleString()} rows)
+                      </button>
+                    </span>
+                  ) : table_result?.length ? (
+                    <span>
+                      Showing {table_result.length} query results •{' '}
+                      <button onClick={handleResetToFullData} className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer">
+                        Reset to full table ({fullData?.length?.toLocaleString() || datasetInfo?.row_count?.toLocaleString()} rows)
+                      </button>
+                    </span>
+                  ) : fullData?.length ? (
+                    `${fullData.length.toLocaleString()} rows loaded — click any column header to profile it`
+                  ) : (
+                    'No data'
+                  )}
                 </p>
               </div>
               {datasetInfo && (
                 <div className="flex items-center gap-2 relative">
+                  {(table_result?.length || nlFilterRows || nlFilterActive) && (
+                    <button
+                      onClick={handleResetToFullData}
+                      className="btn-secondary px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1.5 text-amber-500 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition-all"
+                      title="Reset table to view full dataset"
+                    >
+                      <ArrowCounterClockwise size={13} weight="bold" />
+                      <span>Reset Table</span>
+                    </button>
+                  )}
                   <div className="relative">
                     <button
                       onClick={() => setIsDataExportOpen((prev) => !prev)}
@@ -547,6 +637,17 @@ export default function App() {
                       </>
                     )}
                   </button>
+                  {(table_result?.length || nlFilterRows || nlFilterActive || nlFilterInput) && (
+                    <button
+                      type="button"
+                      onClick={handleResetToFullData}
+                      className="btn-secondary px-3 py-1.5 text-xs font-semibold shrink-0 cursor-pointer flex items-center gap-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-all"
+                      title="Reset filter and view full dataset"
+                    >
+                      <ArrowCounterClockwise size={13} />
+                      <span>Reset</span>
+                    </button>
+                  )}
                 </form>
 
                 {nlFilterActive && (
@@ -571,32 +672,7 @@ export default function App() {
               )}
             </div>
 
-            <DataCleaningModal
-              isOpen={isCleanModalOpen}
-              onClose={() => setIsCleanModalOpen(false)}
-              authFetch={authFetch}
-              onCleanSuccess={async (cleanedData) => {
-                setDatasetInfo((prev) => ({
-                  ...prev,
-                  columns: cleanedData.columns,
-                  row_count: cleanedData.row_count,
-                  sample_rows: cleanedData.sample_rows,
-                  schema: cleanedData.schema,
-                }));
 
-                try {
-                  const tableRes = await authFetch('/api/ask', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: 'Show all data' }),
-                  });
-                  const result = await tableRes.json();
-                  setFullData(result.table_result || cleanedData.sample_rows);
-                } catch {
-                  setFullData(cleanedData.sample_rows);
-                }
-              }}
-            />
           </div>
         );
 
@@ -722,6 +798,10 @@ export default function App() {
       {showPostUploadModal && (
         <PostUploadTransformModal
           datasetInfo={datasetInfo}
+          onCleanClick={() => {
+            setShowPostUploadModal(false);
+            setIsCleanModalOpen(true);
+          }}
           onTransformClick={() => {
             setShowPostUploadModal(false);
             setActivePage('transform');
@@ -732,6 +812,16 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Interactive Data Quality & Noise Cleaning Modal */}
+      <DataCleaningModal
+        isOpen={isCleanModalOpen}
+        onClose={() => setIsCleanModalOpen(false)}
+        datasetInfo={datasetInfo}
+        initialQualityProfile={datasetInfo?.quality_profile}
+        authFetch={authFetch}
+        onCleanSuccess={handleCleanSuccess}
+      />
 
       {/* Global Settings Modal */}
       <SettingsModal

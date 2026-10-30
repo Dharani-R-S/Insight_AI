@@ -83,18 +83,20 @@ function requireAuth(req, res, next) {
 
 // ─── POST /api/auth/signup ───
 app.post('/api/auth/signup', async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password } = req.body || {};
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-  if (!name || !email || !password) {
+  if (!cleanName || !cleanEmail || !password) {
     return res.status(400).json({ error: 'Name, email and password are required.' });
   }
-  if (password.length < 6) {
+  if (typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
   }
 
   try {
     const users = getUsers();
-    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    const existing = Array.isArray(users) && users.find(u => u && u.email && String(u.email).toLowerCase() === cleanEmail);
     if (existing) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
@@ -102,8 +104,8 @@ app.post('/api/auth/signup', async (req, res) => {
     const password_hash = await bcrypt.hash(password, 10);
     const user = {
       id: Date.now(),
-      name,
-      email,
+      name: cleanName,
+      email: cleanEmail,
       password_hash,
       created_at: new Date().toISOString()
     };
@@ -111,26 +113,26 @@ app.post('/api/auth/signup', async (req, res) => {
     saveUsers(users);
 
     const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-
-    console.log(`✅ New user registered: ${email}`);
+    console.log(`✅ New user registered: ${cleanEmail}`);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
   } catch (err) {
-    console.error('❌ Signup error:', err.message);
-    res.status(500).json({ error: 'Signup failed. Please try again.' });
+    console.error('❌ Signup error:', err);
+    res.status(500).json({ error: 'Signup failed. Please try again: ' + (err.message || 'Server error') });
   }
 });
 
 // ─── POST /api/auth/login ───
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-  if (!email || !password) {
+  if (!cleanEmail || !password) {
     return res.status(400).json({ error: 'Email and password are required.' });
   }
 
   try {
     const users = getUsers();
-    const row = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    const row = Array.isArray(users) && users.find(u => u && u.email && String(u.email).toLowerCase() === cleanEmail);
     if (!row) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -142,12 +144,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = { id: row.id, name: row.name, email: row.email };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
-
-    console.log(`🔑 User logged in: ${email}`);
     res.json({ token, user });
   } catch (err) {
-    console.error('❌ Login error:', err.message);
-    res.status(500).json({ error: 'Login failed. Please try again.' });
+    console.error('❌ Login error:', err);
+    res.status(500).json({ error: 'Login failed. Please try again: ' + (err.message || 'Server error') });
   }
 });
 
@@ -203,6 +203,74 @@ function getUserSession(userId) {
   return userSessions.get(userId);
 }
 
+const activeSessionFile = path.join(dataDir, 'active_session.json');
+
+function saveActiveSession(session) {
+  try {
+    fs.writeFileSync(activeSessionFile, JSON.stringify(session, null, 2), 'utf-8');
+  } catch (err) {}
+}
+
+function resolveUserSession(userId, explicitPath) {
+  const currentSession = getUserSession(userId);
+  if (currentSession.dbPath && fs.existsSync(currentSession.dbPath)) {
+    return { session: currentSession, dbPath: currentSession.dbPath };
+  }
+  if (explicitPath && fs.existsSync(explicitPath)) {
+    currentSession.dbPath = explicitPath;
+    saveActiveSession(currentSession);
+    return { session: currentSession, dbPath: explicitPath };
+  }
+  for (const [uid, sess] of userSessions.entries()) {
+    if (sess && sess.dbPath && fs.existsSync(sess.dbPath)) {
+      Object.assign(currentSession, sess);
+      saveActiveSession(currentSession);
+      return { session: currentSession, dbPath: sess.dbPath };
+    }
+  }
+
+  // Restore from persistent active_session.json
+  try {
+    if (fs.existsSync(activeSessionFile)) {
+      const saved = JSON.parse(fs.readFileSync(activeSessionFile, 'utf-8'));
+      if (saved && saved.dbPath && fs.existsSync(saved.dbPath)) {
+        Object.assign(currentSession, saved);
+        userSessions.set(userId, currentSession);
+        return { session: currentSession, dbPath: saved.dbPath };
+      }
+    }
+  } catch (err) {}
+
+  // Fallback: discover latest .db file in python-service/uploads
+  try {
+    const pyUploads = path.join(__dirname, '../python-service/uploads');
+    if (fs.existsSync(pyUploads)) {
+      const dbFiles = fs.readdirSync(pyUploads)
+        .filter(f => f.endsWith('.db') && !f.includes('test'))
+        .map(f => {
+          const full = path.join(pyUploads, f);
+          return { path: full, mtime: fs.statSync(full).mtimeMs, name: f };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+
+      if (dbFiles.length > 0) {
+        const latest = dbFiles[0];
+        console.log(`📡 Auto-restoring latest active dataset: ${latest.name}`);
+        currentSession.dbPath = latest.path;
+        currentSession.tableName = 'data';
+        saveActiveSession(currentSession);
+        userSessions.set(userId, currentSession);
+        return { session: currentSession, dbPath: latest.path };
+      }
+    }
+  } catch (e) {
+    console.warn('Auto-discover dataset warning:', e);
+  }
+
+  return { session: currentSession, dbPath: null };
+}
+
+
 // ─── POST /api/upload (protected) ───
 app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
@@ -232,8 +300,20 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
     };
 
     userSessions.set(req.user.id, updatedSession);
+    saveActiveSession(updatedSession);
 
     console.log(`✅ Dataset loaded for ${req.user.email}: ${updatedSession.rowCount} rows, ${updatedSession.columns?.length} columns`);
+
+    // Automatically profile dataset quality upon upload
+    let qualityProfile = null;
+    try {
+      const profRes = await axios.post(`${PYTHON_URL}/profile-quality`, {
+        db_path: updatedSession.dbPath,
+      }, { timeout: 20000 });
+      qualityProfile = profRes.data;
+    } catch (profErr) {
+      console.warn('⚠️ Initial dataset profiling warning:', profErr.message);
+    }
 
     res.json({
       table_name: updatedSession.tableName,
@@ -241,6 +321,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       row_count: updatedSession.rowCount,
       sample_rows: updatedSession.sampleRows,
       schema: updatedSession.schema,
+      quality_profile: qualityProfile,
     });
   } catch (err) {
     console.error('❌ Upload error:', err.response?.data || err.message);
@@ -252,8 +333,8 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
 
 // ─── GET /api/datasets/current (protected) ───
 app.get('/api/datasets/current', requireAuth, (req, res) => {
-  const currentSession = getUserSession(req.user.id);
-  if (!currentSession.dbPath) {
+  const { session: currentSession, dbPath } = resolveUserSession(req.user.id);
+  if (!dbPath) {
     return res.status(404).json({ error: 'No dataset in current session.' });
   }
 
@@ -263,38 +344,77 @@ app.get('/api/datasets/current', requireAuth, (req, res) => {
     row_count: currentSession.rowCount,
     sample_rows: currentSession.sampleRows,
     schema: currentSession.schema,
+    is_cleaned: !!currentSession.isCleaned,
   });
+});
+
+// ─── POST /api/datasets/profile-quality (protected) ───
+app.post('/api/datasets/profile-quality', requireAuth, async (req, res) => {
+  try {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
+    if (!dbPath) {
+      return res.status(400).json({ error: 'No dataset in session to profile.' });
+    }
+
+    const response = await axios.post(`${PYTHON_URL}/profile-quality`, {
+      db_path: dbPath,
+    }, { timeout: 30000 });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ Quality profiling error:', err.response?.data || err.message);
+    res.status(500).json({
+      error: err.response?.data?.detail || err.message || 'Profiling failed',
+    });
+  }
 });
 
 // ─── POST /api/datasets/clean (protected) ───
 app.post('/api/datasets/clean', requireAuth, async (req, res) => {
   try {
-    const currentSession = getUserSession(req.user.id);
-    if (!currentSession.dbPath) {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body.db_path);
+    if (!dbPath) {
       return res.status(400).json({ error: 'No dataset in session to clean.' });
     }
 
-    const { impute_numeric, fill_text, drop_duplicates, drop_empty_cols } = req.body;
+    const {
+      remove_duplicates,
+      column_actions,
+      outlier_actions,
+      standardize_text,
+      preview_only,
+      impute_numeric,
+      fill_text,
+      drop_duplicates,
+      drop_empty_cols,
+    } = req.body;
 
     const response = await axios.post(`${PYTHON_URL}/clean-data`, {
-      db_path: currentSession.dbPath,
-      impute_numeric: impute_numeric || 'mean',
-      fill_text: fill_text || 'N/A',
-      drop_duplicates: drop_duplicates ?? true,
-      drop_empty_cols: drop_empty_cols ?? true,
-    });
+      db_path: dbPath,
+      remove_duplicates: remove_duplicates !== undefined ? remove_duplicates : drop_duplicates,
+      column_actions: column_actions || null,
+      outlier_actions: outlier_actions || null,
+      standardize_text: standardize_text !== undefined ? standardize_text : true,
+      preview_only: !!preview_only,
+      impute_numeric,
+      fill_text,
+      drop_empty_cols,
+    }, { timeout: 60000 });
 
-    const updatedSession = {
-      ...currentSession,
-      schema: response.data.schema,
-      sampleRows: response.data.sample_rows,
-      columns: response.data.columns,
-      rowCount: response.data.row_count,
-    };
+    if (!preview_only && response.data.row_count !== undefined) {
+      const updatedSession = {
+        ...currentSession,
+        schema: response.data.schema || currentSession.schema,
+        sampleRows: response.data.sample_rows || currentSession.sampleRows,
+        columns: response.data.columns || currentSession.columns,
+        rowCount: response.data.row_count,
+        isCleaned: true,
+      };
 
-    userSessions.set(req.user.id, updatedSession);
-
-    console.log(`🧹 Dataset cleaned for ${req.user.email}: ${response.data.cleaned_summary?.rows_removed ?? 0} rows removed`);
+      userSessions.set(req.user.id, updatedSession);
+    saveActiveSession(updatedSession);
+      console.log(`🧹 Dataset cleaned for ${req.user.email}: ${response.data.summary?.rows_removed ?? 0} rows removed, ${response.data.summary?.values_filled ?? 0} values filled`);
+    }
 
     res.json(response.data);
   } catch (err) {
@@ -305,11 +425,45 @@ app.post('/api/datasets/clean', requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /api/datasets/revert-original (protected) ───
+app.post('/api/datasets/revert-original', requireAuth, async (req, res) => {
+  try {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
+    if (!dbPath) {
+      return res.status(400).json({ error: 'No dataset in session to revert.' });
+    }
+
+    const response = await axios.post(`${PYTHON_URL}/revert-original`, {
+      db_path: dbPath,
+    }, { timeout: 30000 });
+
+    const updatedSession = {
+      ...currentSession,
+      schema: response.data.schema,
+      sampleRows: response.data.sample_rows,
+      columns: response.data.columns,
+      rowCount: response.data.row_count,
+      isCleaned: false,
+    };
+
+    userSessions.set(req.user.id, updatedSession);
+    saveActiveSession(updatedSession);
+    console.log(`↩️ Dataset reverted for ${req.user.email}: ${response.data.row_count} rows restored`);
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ Revert dataset error:', err.response?.data || err.message);
+    res.status(500).json({
+      error: err.response?.data?.detail || err.message || 'Reverting failed',
+    });
+  }
+});
+
 // ─── GET & POST /api/datasets/export (protected) ───
 const handleExportDataset = async (req, res) => {
   try {
-    const currentSession = getUserSession(req.user.id);
-    if (!currentSession.dbPath) {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
+    if (!dbPath) {
       return res.status(400).json({ error: 'No active dataset in session to export.' });
     }
 
@@ -319,7 +473,7 @@ const handleExportDataset = async (req, res) => {
     console.log(`📥 Exporting dataset for ${req.user.email} in format: ${format}`);
 
     const response = await axios.post(`${PYTHON_URL}/export-data`, {
-      db_path: currentSession.dbPath,
+      db_path: dbPath,
       format,
       filename,
     }, {
@@ -349,13 +503,13 @@ app.post('/api/datasets/export', requireAuth, handleExportDataset);
 app.post('/api/ask', requireAuth, async (req, res) => {
   try {
     const { question } = req.body;
-    const currentSession = getUserSession(req.user.id);
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
 
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
     }
 
-    if (!currentSession.dbPath) {
+    if (!dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
 
@@ -363,9 +517,9 @@ app.post('/api/ask', requireAuth, async (req, res) => {
 
     const response = await axios.post(`${PYTHON_URL}/analyze`, {
       question,
-      db_path: currentSession.dbPath,
-      schema: currentSession.schema,
-      sample_rows: currentSession.sampleRows,
+      db_path: dbPath,
+      schema: currentSession.schema || {},
+      sample_rows: currentSession.sampleRows || [],
     }, {
       timeout: 60000,
     });
@@ -422,18 +576,56 @@ app.post('/api/recommend-visualizations', requireAuth, async (req, res) => {
 // ─── POST /api/recommend-queries (protected) ───
 app.post('/api/recommend-queries', requireAuth, async (req, res) => {
   try {
-    const response = await axios.post(`${PYTHON_URL}/recommend-queries`, req.body, { timeout: 15000 });
+    const currentSession = getUserSession(req.user.id);
+    const payload = {
+      columns: req.body.columns || currentSession.columns || [],
+      schema_info: req.body.schema_info || currentSession.schema || {},
+      sample_rows: (req.body.sample_rows || currentSession.sampleRows || []).slice(0, 5),
+    };
+
+    const response = await axios.post(`${PYTHON_URL}/recommend-queries`, payload, { timeout: 15000 });
     res.json(response.data);
   } catch (err) {
-    console.warn('⚠️ AI recommend-queries failed:', err.message);
-    const cols = req.body.columns || [];
+    console.warn('⚠️ recommend-queries fallback generator active:', err.message);
+    const currentSession = getUserSession(req.user.id);
+    const cols = req.body.columns || currentSession.columns || [];
+    const lowerCols = cols.map(c => String(c).toLowerCase());
+
+    const isMedia = lowerCols.some(c => ['title', 'series_or_movie', 'genre', 'director', 'imdb_score'].includes(c));
+    let fallback = [];
+
+    if (isMedia) {
+      if (lowerCols.includes('series_or_movie')) fallback.push('What is the distribution of movies and TV shows?');
+      if (lowerCols.includes('genre')) fallback.push('What content distribution can be identified by genre?');
+      if (lowerCols.includes('country_availability')) fallback.push('Which countries have the most titles available?');
+      if (lowerCols.some(c => c.includes('rating'))) fallback.push('Which content ratings appear most frequently?');
+      if (lowerCols.some(c => c.includes('release'))) fallback.push('How has the number of titles released changed over time?');
+      if (lowerCols.includes('imdb_score')) fallback.push('Top 10 highest-rated titles by IMDb Score');
+    } else {
+      const clean = (s) => s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const numCols = cols.filter(c => ['sales', 'revenue', 'cost', 'price', 'amount', 'score', 'quantity', 'profit'].some(k => c.toLowerCase().includes(k)));
+      const catCols = cols.filter(c => !numCols.includes(c) && !c.toLowerCase().endsWith('_id'));
+
+      if (numCols.length && catCols.length) {
+        fallback.push(`Show total ${clean(numCols[0])} per ${clean(catCols[0])}`);
+        fallback.push(`Average ${clean(numCols[0])} by ${clean(catCols[0])}`);
+      }
+      if (catCols.length) fallback.push(`Top 5 ${clean(catCols[0])} by count`);
+      if (numCols.length) fallback.push(`Distribution of ${clean(numCols[0])}`);
+    }
+
+    if (fallback.length === 0) {
+      fallback = [
+        'What is the distribution of records across categories?',
+        'Which values appear most frequently?',
+        'How do key metrics vary over time?',
+        'Are there any missing or null values in this dataset?'
+      ];
+    }
+
     res.json({
-      queries: [
-        'Show total sales per region',
-        'Top 5 categories by volume',
-        'Average values across groups',
-        'Distribution of records'
-      ]
+      queries: fallback,
+      categorized_queries: fallback.map(q => ({ question: q, category: 'Suggested' }))
     });
   }
 });
@@ -506,8 +698,8 @@ app.post('/api/transform/apply', async (req, res) => {
 // ─── POST /api/datasets/auto-visualize (protected) ───
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
   try {
-    const currentSession = getUserSession(req.user.id);
-    if (!currentSession.dbPath) {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
+    if (!dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
 
@@ -516,9 +708,9 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
     // Step 1: Get visualization recommendations from Python service
     try {
       const recommendationResponse = await axios.post(`${PYTHON_URL}/recommend-visualizations`, {
-        columns: currentSession.columns,
-        schema: currentSession.schema,
-        sample_rows: currentSession.sampleRows,
+        columns: currentSession.columns || [],
+        schema: currentSession.schema || {},
+        sample_rows: currentSession.sampleRows || [],
       }, {
         timeout: 30000,
       });
@@ -566,8 +758,8 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
       try {
         const chartsResponse = await axios.post(`${PYTHON_URL}/analyze/generate-charts`, {
           recommendations: validRecommendations,
-          sample_rows: currentSession.sampleRows,
-          db_path: currentSession.dbPath,
+          sample_rows: currentSession.sampleRows || [],
+          db_path: dbPath,
           query: 'SELECT * FROM data',
         }, {
           timeout: 60000,
@@ -633,8 +825,8 @@ app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {
 // ─── POST /api/datasets/auto-dashboard (protected) ───
 app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
   try {
-    const currentSession = getUserSession(req.user.id);
-    if (!currentSession.dbPath) {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body?.db_path);
+    if (!dbPath) {
       return res.status(400).json({ error: 'No dataset uploaded. Please upload a CSV file first.' });
     }
 
@@ -643,10 +835,10 @@ app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
     // Call Python service to generate dashboard with chart data
     try {
       const dashboardResponse = await axios.post(`${PYTHON_URL}/analyze/auto-dashboard`, {
-        columns: currentSession.columns,
-        schema: currentSession.schema,
-        sample_rows: currentSession.sampleRows.slice(0, 500),
-        db_path: currentSession.dbPath,
+        columns: currentSession.columns || [],
+        schema: currentSession.schema || {},
+        sample_rows: (currentSession.sampleRows || []).slice(0, 500),
+        db_path: dbPath,
       }, {
         timeout: 60000,
       });
@@ -655,12 +847,14 @@ app.post('/api/datasets/auto-dashboard', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'Could not generate dashboard visualizations.' });
       }
 
-      const charts = dashboardResponse.data.charts;
-      console.log(`✅ Generated ${charts.length} dashboard charts`);
+      const charts = dashboardResponse.data.charts || [];
+      const kpis = dashboardResponse.data.kpis || null;
+      console.log(`✅ Generated ${charts.length} dashboard charts and dynamic KPIs`);
 
       res.json({
         charts: charts,
-        summary: {
+        kpis: kpis,
+        summary: dashboardResponse.data.summary || {
           totalCharts: charts.length,
           datasetInfo: {
             rowCount: currentSession.rowCount,
