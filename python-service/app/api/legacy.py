@@ -115,9 +115,7 @@ class ExportDataRequest(BaseModel):
     filename: str = "transformed_dataset"
 
 
-# ─── POST /clean-data ───
-@router.post("/clean-data")
-
+# ─── POST /ai-clean-plan ───
 @router.post("/ai-clean-plan")
 async def ai_clean_plan(request: CleanPlanRequest):
     """
@@ -131,6 +129,8 @@ async def ai_clean_plan(request: CleanPlanRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─── POST /clean-data ───
+@router.post("/clean-data")
 async def clean_data(request: CleanDataRequest):
     """
     Interactive, column-level data cleaning suite.
