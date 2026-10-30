@@ -291,6 +291,9 @@ export default function DataCleaningModal({
       if (onCleanSuccess) {
         onCleanSuccess(data);
       }
+      if (onClose) {
+        onClose();
+      }
     } catch (err) {
       setError(err.message || 'Cleaning execution failed');
     } finally {
