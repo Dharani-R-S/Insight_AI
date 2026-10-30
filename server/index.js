@@ -198,6 +198,7 @@ function getUserSession(userId) {
       tableName: null,
       columns: null,
       rowCount: null,
+      summaryStats: null,
     });
   }
   return userSessions.get(userId);
@@ -297,6 +298,8 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       tableName: response.data.table_name,
       columns: response.data.columns,
       rowCount: response.data.row_count,
+      summaryStats: response.data.summary_stats || currentSession.summaryStats,
+      summaryStats: response.data.summary_stats,
     };
 
     userSessions.set(req.user.id, updatedSession);
@@ -322,6 +325,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       sample_rows: updatedSession.sampleRows,
       schema: updatedSession.schema,
       quality_profile: qualityProfile,
+      summary_stats: updatedSession.summaryStats,
     });
   } catch (err) {
     console.error('❌ Upload error:', err.response?.data || err.message);
@@ -345,6 +349,7 @@ app.get('/api/datasets/current', requireAuth, (req, res) => {
     sample_rows: currentSession.sampleRows,
     schema: currentSession.schema,
     is_cleaned: !!currentSession.isCleaned,
+    summary_stats: currentSession.summaryStats,
   });
 });
 
@@ -370,6 +375,28 @@ app.post('/api/datasets/profile-quality', requireAuth, async (req, res) => {
 });
 
 // ─── POST /api/datasets/clean (protected) ───
+// ─── POST /api/datasets/ai-clean-plan (protected) ───
+app.post('/api/datasets/ai-clean-plan', requireAuth, async (req, res) => {
+  try {
+    const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body.db_path);
+    if (!dbPath) {
+      return res.status(400).json({ error: 'No dataset in session to analyze.' });
+    }
+
+    const response = await axios.post(`${PYTHON_URL}/ai-clean-plan`, {
+      db_path: dbPath,
+      prompt: req.body.prompt || null,
+    }, { timeout: 45000 });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ AI cleaning plan error:', err.response?.data || err.message);
+    res.status(500).json({
+      error: err.response?.data?.detail || err.message || 'Failed to generate AI cleaning plan',
+    });
+  }
+});
+
 app.post('/api/datasets/clean', requireAuth, async (req, res) => {
   try {
     const { session: currentSession, dbPath } = resolveUserSession(req.user.id, req.body.db_path);
@@ -675,7 +702,7 @@ app.post('/api/settings/test', requireAuth, async (req, res) => {
 });
 
 // ─── Data Transformation Proxies ───
-app.post('/api/transform/join', async (req, res) => {
+app.post('/api/transform/join', requireAuth, async (req, res) => {
   try {
     const pyRes = await axios.post(`${PYTHON_URL}/api/transform/join`, req.body);
     res.json(pyRes.data);
@@ -685,7 +712,7 @@ app.post('/api/transform/join', async (req, res) => {
   }
 });
 
-app.post('/api/transform/apply', async (req, res) => {
+app.post('/api/transform/apply', requireAuth, async (req, res) => {
   try {
     const pyRes = await axios.post(`${PYTHON_URL}/api/transform/apply`, req.body);
     res.json(pyRes.data);
@@ -694,6 +721,33 @@ app.post('/api/transform/apply', async (req, res) => {
     res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
   }
 });
+
+// ─── Vectorized Transform (Phase 3), Auto-Visualize (Phase 4) & Intelligence (Phase 5) Proxies ───
+const proxyToPython = async (req, res, targetPath) => {
+  try {
+    const headers = {};
+    if (req.headers.authorization) headers.authorization = req.headers.authorization;
+    const pyRes = await axios({
+      method: req.method,
+      url: `${PYTHON_URL}${targetPath}`,
+      data: req.body,
+      params: req.query,
+      headers,
+      timeout: 60000,
+    });
+    res.status(pyRes.status).json(pyRes.data);
+  } catch (err) {
+    console.error(`Proxy error for ${targetPath}:`, err.response?.data || err.message);
+    res.status(err.response?.status || 500).json(err.response?.data || { error: err.message });
+  }
+};
+
+app.post('/api/transform/compile', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/compile'));
+app.post('/api/transform/preview', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/preview'));
+app.post('/api/transform/commit', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/commit'));
+app.post('/api/visualize/auto', requireAuth, (req, res) => proxyToPython(req, res, '/api/visualize/auto'));
+app.post('/api/intelligence/root-cause', requireAuth, (req, res) => proxyToPython(req, res, '/api/intelligence/root-cause'));
+app.post('/api/intelligence/next-questions', requireAuth, (req, res) => proxyToPython(req, res, '/api/intelligence/next-questions'));
 
 // ─── POST /api/datasets/auto-visualize (protected) ───
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {

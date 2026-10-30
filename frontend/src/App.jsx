@@ -521,19 +521,14 @@ export default function App() {
                   {nlFilterActive ? (
                     <span>
                       Showing {nlFilterRows?.length ?? 0} results matching "{nlFilterActive}" •{' '}
-                      <button onClick={handleResetToFullData} className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer">
-                        Reset to full table ({fullData?.length?.toLocaleString() || datasetInfo?.row_count?.toLocaleString()} rows)
-                      </button>
-                    </span>
-                  ) : table_result?.length ? (
-                    <span>
-                      Showing {table_result.length} query results •{' '}
-                      <button onClick={handleResetToFullData} className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer">
+                      <button onClick={handleResetNLFilter} className="text-[var(--color-accent)] hover:underline font-semibold cursor-pointer">
                         Reset to full table ({fullData?.length?.toLocaleString() || datasetInfo?.row_count?.toLocaleString()} rows)
                       </button>
                     </span>
                   ) : fullData?.length ? (
                     `${fullData.length.toLocaleString()} rows loaded — click any column header to profile it`
+                  ) : datasetInfo?.row_count ? (
+                    `${datasetInfo.row_count.toLocaleString()} rows loaded — click any column header to profile it`
                   ) : (
                     'No data'
                   )}
@@ -541,7 +536,7 @@ export default function App() {
               </div>
               {datasetInfo && (
                 <div className="flex items-center gap-2 relative">
-                  {(table_result?.length || nlFilterRows || nlFilterActive) && (
+                  {(nlFilterRows || nlFilterActive) && (
                     <button
                       onClick={handleResetToFullData}
                       className="btn-secondary px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1.5 text-amber-500 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition-all"
@@ -665,8 +660,8 @@ export default function App() {
             )}
 
             <div className="flex-1 min-h-0 overflow-hidden p-4 flex">
-              {(nlFilterRows || table_result?.length || fullData?.length) ? (
-                <DataTable data={nlFilterRows ? nlFilterRows : (table_result?.length ? table_result : fullData)} />
+              {(nlFilterRows || fullData?.length || datasetInfo?.sample_rows?.length) ? (
+                <DataTable data={nlFilterRows ? nlFilterRows : (fullData?.length ? fullData : datasetInfo?.sample_rows)} />
               ) : (
                 <EmptyPage icon="📋" title="No data" desc="Upload a CSV or run a query." />
               )}

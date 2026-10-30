@@ -91,6 +91,11 @@ async def profile_quality_endpoint(request: ProfileQualityRequest):
         raise HTTPException(status_code=500, detail=f"Quality profiling failed: {str(e)}")
 
 
+
+class CleanPlanRequest(BaseModel):
+    db_path: str
+    prompt: Optional[str] = None
+
 class CleanDataRequest(BaseModel):
     db_path: str
     remove_duplicates: Optional[bool] = None
@@ -112,6 +117,20 @@ class ExportDataRequest(BaseModel):
 
 # ─── POST /clean-data ───
 @router.post("/clean-data")
+
+@router.post("/ai-clean-plan")
+async def ai_clean_plan(request: CleanPlanRequest):
+    """
+    Generate an AI-driven or heuristic cleaning plan for the dataset.
+    """
+    if not os.path.exists(request.db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    try:
+        from services.data_profiler import generate_ai_cleaning_plan
+        return generate_ai_cleaning_plan(db_path=request.db_path, user_prompt=request.prompt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 async def clean_data(request: CleanDataRequest):
     """
     Interactive, column-level data cleaning suite.
@@ -151,6 +170,18 @@ async def clean_data(request: CleanDataRequest):
             standardize_text=bool(request.standardize_text),
             preview_only=bool(request.preview_only),
         )
+
+        # If summary_stats can be computed on cleaned df, attach it
+        if not request.preview_only:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                cleaned_df = pd.read_sql("SELECT * FROM data", conn)
+                conn.close()
+                from services.database import compute_dataset_summary_stats
+                result["summary_stats"] = compute_dataset_summary_stats(cleaned_df)
+            except Exception:
+                pass
 
         return result
     except Exception as e:
@@ -284,6 +315,35 @@ async def analyze_data(request: AnalyzeRequest):
         # Step 1: NL → SQL via Groq
         print(f"🧠 Converting to SQL: \"{question}\"")
         sql_query = nl_to_sql(question, schema, sample_rows)
+
+        if sql_query.startswith("CONVERSATIONAL:"):
+            msg = sql_query.replace("CONVERSATIONAL:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "conversational": True,
+                "out_of_bounds": False,
+                "message": msg
+            }
+
+        if sql_query.startswith("OUT_OF_BOUNDS:"):
+            msg = sql_query.replace("OUT_OF_BOUNDS:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "out_of_bounds": True,
+                "conversational": False,
+                "message": msg
+            }
+
         result["sql_query"] = sql_query
         print(f"📝 SQL: {sql_query}")
 

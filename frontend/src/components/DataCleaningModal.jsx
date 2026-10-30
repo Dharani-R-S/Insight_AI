@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { 
-  Broom, 
+import {
+  Broom,
+  MagicWand,
+  PaperPlaneRight,
+  ChatCircleDots,
+  Lightning, 
   Check, 
   X, 
   Sparkle, 
@@ -44,6 +48,13 @@ export default function DataCleaningModal({
   const [isApplying, setIsApplying] = useState(false);
   const [appliedSummary, setAppliedSummary] = useState(null);
   const [error, setError] = useState('');
+  // AI Cleaning Agent States
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [aiPlan, setAiPlan] = useState(null);
+  const [aiMode, setAiMode] = useState(null); // 'auto' | 'prompt'
+  const [showPromptInput, setShowPromptInput] = useState(false);
+
 
   // Fetch quality profile if not passed
   useEffect(() => {
@@ -148,6 +159,57 @@ export default function DataCleaningModal({
   const handleApplyDefaults = () => {
     if (!profile?.columns) return;
     initSelections(profile);
+  };
+
+  
+  // AI Cleaning Agent API Call
+  const handleRunAICleaning = async (promptOverride = null) => {
+    setIsLoadingAI(true);
+    setError('');
+    const targetPrompt = promptOverride !== null ? promptOverride : (aiPrompt.trim() ? aiPrompt.trim() : null);
+
+    try {
+      const doFetch = authFetch || fetch;
+      const res = await doFetch('/api/datasets/ai-clean-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_path: datasetInfo?.db_path,
+          prompt: targetPrompt,
+        }),
+      });
+
+      const plan = await res.json();
+      if (!res.ok) throw new Error(plan.error || 'Failed to generate AI cleaning plan');
+
+      // Update cleaning selections based on AI plan
+      if (plan.column_actions) {
+        setColumnActions((prev) => ({
+          ...prev,
+          ...plan.column_actions,
+        }));
+      }
+      if (plan.outlier_actions) {
+        setOutlierActions((prev) => ({
+          ...prev,
+          ...plan.outlier_actions,
+        }));
+      }
+      if (plan.remove_duplicates !== undefined) {
+        setRemoveDuplicates(plan.remove_duplicates);
+      }
+      if (plan.standardize_text !== undefined) {
+        setStandardizeText(plan.standardize_text);
+      }
+
+      setAiPlan(plan);
+      setAiMode(targetPrompt ? 'prompt' : 'auto');
+    } catch (err) {
+      console.error('AI cleaning plan error:', err);
+      setError(err.message || 'Could not run AI cleaning agent');
+    } finally {
+      setIsLoadingAI(false);
+    }
   };
 
   const handleResetToKeep = () => {
@@ -391,6 +453,194 @@ export default function DataCleaningModal({
                     {colsWithOutliers.length} numerical columns
                   </div>
                 </div>
+              </div>
+
+                            {/* AI Cleaning Agent Copilot Suite */}
+              <div className="card p-4 bg-gradient-to-r from-[var(--color-bg-secondary)] via-[var(--color-bg-card)] to-[var(--color-bg-secondary)] border border-[var(--color-accent)]/30 rounded-xl space-y-3.5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-[var(--color-accent)]/15 text-[var(--color-accent)] flex items-center justify-center font-bold">
+                      <Sparkle size={16} weight="fill" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[var(--color-text-primary)]">AI Data Cleaning Agent</span>
+                        <span className="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.2 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)] border border-[var(--color-accent)]/20">
+                          Intelligent Automation
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[var(--color-text-muted)]">
+                        Use 1-click intelligent auto-clean or describe custom cleaning instructions in plain English
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Top Two AI Buttons */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPromptInput(false);
+                        handleRunAICleaning(null);
+                      }}
+                      disabled={isLoadingAI}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-[var(--color-accent)] to-blue-600 hover:opacity-90 text-white shadow-xs transition-all disabled:opacity-50"
+                      title="Automatically analyze and configure optimal cleaning transformations"
+                    >
+                      {isLoadingAI && aiMode === 'auto' ? (
+                        <>
+                          <ArrowsClockwise size={13} className="animate-spin" />
+                          <span>Auto-Cleaning...</span>
+                        </>
+                      ) : (
+                        <>
+                          <MagicWand size={14} weight="bold" />
+                          <span>Auto-Clean with AI</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPromptInput((prev) => !prev)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 border transition-all ${
+                        showPromptInput
+                          ? 'bg-[var(--color-bg-hover)] text-[var(--color-text-primary)] border-[var(--color-border)]'
+                          : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border-[var(--color-border)]'
+                      }`}
+                    >
+                      <ChatCircleDots size={14} weight="bold" className="text-[var(--color-accent)]" />
+                      <span>{showPromptInput ? 'Hide AI Prompt' : 'Custom AI Prompt'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Prompt Input Drawer */}
+                {showPromptInput && (
+                  <div className="pt-2 border-t border-[var(--color-border)]/60 space-y-2 animate-fade-in">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (aiPrompt.trim()) handleRunAICleaning(aiPrompt.trim());
+                      }}
+                      className="flex items-center gap-2"
+                    >
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={aiPrompt}
+                          onChange={(e) => setAiPrompt(e.target.value)}
+                          placeholder="e.g. 'Fill missing numbers with median, replace unknown text with Unknown, and remove duplicates'..."
+                          className="input-field w-full text-xs py-2 px-3 pr-8 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded-lg focus:border-[var(--color-accent)]"
+                          autoFocus
+                        />
+                        {aiPrompt && (
+                          <button
+                            type="button"
+                            onClick={() => setAiPrompt('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isLoadingAI || !aiPrompt.trim()}
+                        className="btn-primary px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+                      >
+                        {isLoadingAI && aiMode === 'prompt' ? (
+                          <ArrowsClockwise size={13} className="animate-spin" />
+                        ) : (
+                          <PaperPlaneRight size={13} weight="bold" />
+                        )}
+                        <span>Run Agent</span>
+                      </button>
+                    </form>
+
+                    {/* Quick suggestion prompt chips */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] text-[var(--color-text-muted)] font-medium">Quick suggestions:</span>
+                      {[
+                        'Fill missing values with median & Unknown and drop duplicates',
+                        'Impute numbers with 0 and fill text with Unknown',
+                        'Drop rows with missing values and clip extreme outliers',
+                        'Keep all raw values and only purge duplicate rows'
+                      ].map((chip, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setAiPrompt(chip);
+                            handleRunAICleaning(chip);
+                          }}
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] border border-[var(--color-border)] cursor-pointer transition-colors"
+                        >
+                          {chip}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Plan Execution & Reasoning Result Banner */}
+                {aiPlan && (
+                  <div className="p-3 rounded-lg bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/25 text-xs space-y-2 animate-fade-in">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <Sparkle size={15} weight="fill" className="text-[var(--color-accent)] shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <span className="font-semibold text-[var(--color-accent)]">
+                            {aiMode === 'prompt' ? 'AI Agent Custom Plan Applied' : 'AI Auto-Clean Plan Configured'}
+                          </span>
+                          <p className="text-[11px] text-[var(--color-text-secondary)] leading-relaxed">
+                            {aiPlan.reasoning}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleRequestPreview}
+                          disabled={isLoadingPreview}
+                          className="btn-secondary px-2.5 py-1 text-[11px] font-semibold rounded-lg cursor-pointer flex items-center gap-1"
+                        >
+                          <Eye size={12} weight="bold" />
+                          <span>Preview</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleApplyClean}
+                          disabled={isApplying}
+                          className="btn-primary px-3 py-1 text-[11px] font-semibold rounded-lg cursor-pointer flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white"
+                        >
+                          <Check size={12} weight="bold" />
+                          <span>Apply Now</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Summary Badges */}
+                    {aiPlan.summary_items?.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        {aiPlan.summary_items.slice(0, 6).map((item, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[10px] text-[var(--color-text-secondary)]"
+                          >
+                            <span className="font-semibold text-[var(--color-text-primary)]">{item.title}:</span>
+                            <span className="text-[var(--color-accent)] font-mono">{item.badge}</span>
+                          </span>
+                        ))}
+                        {aiPlan.summary_items.length > 6 && (
+                          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                            +{aiPlan.summary_items.length - 6} more actions
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Deduplication & Global Options */}
@@ -839,24 +1089,44 @@ export default function DataCleaningModal({
             </button>
 
             {step === 'configure' && hasAnyIssues && (
-              <button
-                type="button"
-                onClick={handleRequestPreview}
-                disabled={isLoadingPreview}
-                className="btn-primary px-4 py-1.5 text-xs font-semibold rounded-xl cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
-              >
-                {isLoadingPreview ? (
-                  <>
-                    <ArrowsClockwise size={13} className="animate-spin" />
-                    <span>Calculating Impact...</span>
-                  </>
-                ) : (
-                  <>
-                    <Eye size={14} weight="bold" />
-                    <span>Preview Changes</span>
-                  </>
-                )}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleRequestPreview}
+                  disabled={isLoadingPreview || isApplying}
+                  className="btn-secondary px-3.5 py-1.5 text-xs font-semibold rounded-xl cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  {isLoadingPreview ? (
+                    <>
+                      <ArrowsClockwise size={13} className="animate-spin" />
+                      <span>Previewing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye size={14} weight="bold" />
+                      <span>Preview Changes</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyClean}
+                  disabled={isApplying || isLoadingPreview}
+                  className="btn-primary px-4 py-1.5 text-xs font-semibold rounded-xl cursor-pointer inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+                >
+                  {isApplying ? (
+                    <>
+                      <ArrowsClockwise size={13} className="animate-spin" />
+                      <span>Applying Transformations...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={14} weight="bold" />
+                      <span>Apply Selected Changes</span>
+                    </>
+                  )}
+                </button>
+              </>
             )}
 
             {step === 'preview' && (

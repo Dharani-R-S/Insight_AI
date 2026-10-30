@@ -145,6 +145,11 @@ function DashboardChartPreview({ chart, colorIndex = 0 }) {
   const xAxisKey = chart.x_axis || 'name';
   const yAxisKey = chart.y_axis || 'value';
 
+  const formatAxisLabel = (val) => {
+    const s = String(val ?? '');
+    return s.length > 14 ? `${s.slice(0, 12)}...` : s;
+  };
+
   return (
     <div className="h-52 w-full pt-2">
       <ResponsiveContainer width="100%" height="100%">
@@ -381,6 +386,157 @@ export default function DashboardPage({
     setSavedVisuals(updated);
     saveSavedVisualizations(updated);
     window.dispatchEvent(new Event('saved-visualizations'));
+  };
+
+// Calculate Executive KPIs
+  const computeExecutiveKPIs = () => {
+    if (!datasetInfo) return null;
+
+    const stats = datasetInfo.summary_stats;
+    const rows = datasetInfo.sample_rows || [];
+    const cols = datasetInfo.columns || [];
+
+    const formatVal = (val, isCurr, isPct) => {
+      if (typeof val !== 'number' || isNaN(val)) return '0';
+      if (isPct) {
+        return `${val.toFixed(1)}%`;
+      }
+      if (isCurr) {
+        if (val >= 1000000) return `$${(val / 1000000).toFixed(2)}M`;
+        if (val >= 1000) return `$${Math.round(val).toLocaleString()}`;
+        return `$${val.toFixed(2)}`;
+      } else {
+        if (val >= 1000000) return `${(val / 1000000).toFixed(2)}M`;
+        return Math.round(val).toLocaleString();
+      }
+    };
+
+    const pluralizeCat = (catName) => {
+      if (!catName) return 'Categories';
+      const clean = catName.replace(/_/g, ' ').trim();
+      if (clean.toLowerCase().endsWith('y')) {
+        return clean.slice(0, -1) + 'ies';
+      }
+      if (clean.toLowerCase().endsWith('s')) {
+        return clean;
+      }
+      return clean + 's';
+    };
+
+    if (stats && stats.primary_metric) {
+      const pm = stats.primary_metric;
+      const catEntries = Object.entries(stats.categorical_counts || {});
+      const topCat = catEntries.length > 0 ? catEntries[0] : null;
+
+      const completenessNum = typeof stats.completeness_pct === 'number' ? stats.completeness_pct : 100;
+      const completenessVal = `${completenessNum}% Parsed`;
+      const completenessColor = completenessNum >= 95 ? 'text-emerald-500' : (completenessNum >= 80 ? 'text-amber-500' : 'text-rose-500');
+
+      return {
+        primary: {
+          label: `Total ${pm.label}`,
+          value: formatVal(pm.total, pm.is_currency, pm.is_percentage),
+          desc: `Calculated across ${stats.row_count?.toLocaleString()} active records`,
+          badge: 'Primary Metric'
+        },
+        secondary: [
+          {
+            label: `Avg ${pm.label}`,
+            value: formatVal(pm.avg, pm.is_currency, pm.is_percentage),
+            icon: TrendUp,
+            desc: 'Average metric value per record'
+          },
+          {
+            label: topCat ? `Unique ${pluralizeCat(topCat[0])}` : 'Active Schema',
+            value: topCat ? topCat[1].toLocaleString() : `${cols.length} Dimensions`,
+            icon: ChartDonut,
+            desc: 'Categorical dimension breakdown'
+          },
+          {
+            label: 'Data Completeness',
+            value: completenessVal,
+            icon: CheckCircle,
+            statusColor: completenessColor,
+            desc: stats.non_null_cells ? `${stats.non_null_cells.toLocaleString()} non-null cells verified` : 'Full dataset verified'
+          }
+        ]
+      };
+    }
+
+    // Fallback if summary_stats is not provided
+    const pctKeywords = ['pct', 'percent', 'percentage', 'rate', 'ratio', 'margin', 'growth'];
+    const currKeywords = ['sales', 'revenue', 'profit', 'amount', 'price', 'cost'];
+
+    const numericCol = cols.find(c => {
+      const name = c.toLowerCase();
+      return currKeywords.some(k => name.includes(k)) && rows.length > 0 && typeof rows[0][c] === 'number';
+    }) || cols.find(c => {
+      const name = c.toLowerCase();
+      return (name.includes('qty') || name.includes('quantity')) && rows.length > 0 && typeof rows[0][c] === 'number';
+    }) || cols.find(c => rows.length > 0 && typeof rows[0][c] === 'number');
+
+    const catCol = cols.find(c => {
+      const name = c.toLowerCase();
+      return (name.includes('category') || name.includes('region') || name.includes('product') || name.includes('rep') || name.includes('type')) && rows.length > 0 && typeof rows[0][c] === 'string';
+    }) || cols.find(c => rows.length > 0 && typeof rows[0][c] === 'string');
+
+    let sumVal = 0;
+    let avgVal = 0;
+    if (numericCol) {
+      const vals = rows.map(r => parseFloat(r[numericCol])).filter(v => !isNaN(v));
+      sumVal = vals.reduce((a, b) => a + b, 0);
+      avgVal = vals.length ? sumVal / vals.length : 0;
+    }
+
+    const uniqueCats = catCol ? new Set(rows.map(r => r[catCol])).size : 0;
+    const nLower = numericCol ? numericCol.toLowerCase() : '';
+    const isPercentage = Boolean(numericCol && pctKeywords.some(k => nLower.includes(k)));
+    const isCurrency = Boolean(numericCol && !isPercentage && currKeywords.some(k => nLower.includes(k)));
+
+    // Calculate completeness from sample rows
+    let nonNullCount = 0;
+    const totalSampleCells = rows.length * cols.length;
+    if (totalSampleCells > 0) {
+      rows.forEach(r => {
+        cols.forEach(c => {
+          const val = r[c];
+          if (val !== null && val !== undefined && val !== '') nonNullCount++;
+        });
+      });
+    }
+    const fallbackCompletenessNum = totalSampleCells > 0 ? parseFloat(((nonNullCount / totalSampleCells) * 100).toFixed(1)) : 100;
+    const fallbackCompletenessVal = `${fallbackCompletenessNum}% Parsed`;
+    const fallbackCompletenessColor = fallbackCompletenessNum >= 95 ? 'text-emerald-500' : (fallbackCompletenessNum >= 80 ? 'text-amber-500' : 'text-rose-500');
+
+    return {
+      primary: {
+        label: numericCol ? `Total ${numericCol.replace(/_/g, ' ')}` : 'Total Records',
+        value: numericCol ? formatVal(sumVal, isCurrency, isPercentage) : (datasetInfo.row_count?.toLocaleString() || '0'),
+        desc: `Calculated across ${datasetInfo.row_count?.toLocaleString()} active records`,
+        badge: 'Primary Metric'
+      },
+      secondary: [
+        {
+          label: numericCol ? `Avg ${numericCol.replace(/_/g, ' ')}` : 'Data Columns',
+          value: numericCol ? formatVal(avgVal, isCurrency, isPercentage) : `${cols.length} Cols`,
+          icon: TrendUp,
+          desc: 'Average metric value per record'
+        },
+        {
+          label: catCol ? `Unique ${pluralizeCat(catCol)}` : 'Active Schema',
+          value: catCol ? uniqueCats.toLocaleString() : `${cols.length} Dimensions`,
+          icon: ChartDonut,
+          desc: 'Categorical dimension breakdown'
+        },
+        {
+          label: 'Data Completeness',
+          value: fallbackCompletenessVal,
+          icon: CheckCircle,
+          statusColor: fallbackCompletenessColor,
+          desc: `${nonNullCount.toLocaleString()} non-null sample cells verified`
+        }
+      ]
+    };
   };
 
   const handleRevert = async () => {

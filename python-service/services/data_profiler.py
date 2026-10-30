@@ -442,3 +442,253 @@ def revert_to_original(db_path: str, table_name: str = "data") -> Dict[str, Any]
         }
     finally:
         conn.close()
+
+
+def generate_ai_cleaning_plan(db_path: str, user_prompt: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate an AI-driven or heuristic cleaning plan for the dataset.
+    Supports:
+    1. One-click Auto-Clean (best-practice imputation & deduplication).
+    2. User-prompted AI cleaning (natural language instructions translated to decisions).
+    """
+    import json
+    import re
+    from services.data_profiler import profile_dataset
+
+    profile = profile_dataset(db_path)
+    columns = profile.get("columns", [])
+    duplicate_count = profile.get("duplicate_rows", 0)
+    cols_with_missing = [c for c in columns if c.get("missing_count", 0) > 0]
+    cols_with_outliers = [c for c in columns if c.get("outlier_count", 0) > 0]
+
+    # Defaults
+    column_actions: Dict[str, Any] = {}
+    outlier_actions: Dict[str, str] = {}
+    remove_duplicates = duplicate_count > 0
+    standardize_text = True
+    reasoning = ""
+    mode = "prompted" if (user_prompt and user_prompt.strip()) else "auto"
+
+    # Build smart baseline decisions
+    for col in cols_with_missing:
+        c_name = col["name"]
+        cat = col.get("type_category", "text")
+        outliers = col.get("outlier_count", 0)
+        
+        if cat == "numeric":
+            # If skewed or has outliers, median is robust; otherwise mean
+            if outliers > 0:
+                column_actions[c_name] = {"action": "median"}
+            else:
+                column_actions[c_name] = {"action": "mean"}
+        else:
+            # Low cardinality text -> mode; high cardinality / free text -> 'Unknown'
+            uniq = col.get("unique_count", 0)
+            if uniq > 0 and uniq <= 15:
+                column_actions[c_name] = {"action": "mode"}
+            else:
+                column_actions[c_name] = {"action": "custom", "custom_value": "Unknown"}
+
+    for col in cols_with_outliers:
+        c_name = col["name"]
+        # Default outliers to safe retain unless extreme
+        if col.get("outlier_pct", 0) > 15:
+            outlier_actions[c_name] = "clip_iqr"
+        else:
+            outlier_actions[c_name] = "retain"
+
+    # If user provided a natural language prompt, consult LLM with fallback
+    if mode == "prompted":
+        prompt_text = user_prompt.strip()
+        llm_success = False
+
+        try:
+            from services.llm import call_llm
+            system_prompt = (
+                "You are an expert AI Data Cleaning Agent. "
+                "The user has an uploaded dataset and wants to clean it according to their instructions. "
+                "Analyze the available columns and their issues, then return ONLY a valid JSON object matching the exact specification. "
+                "Allowed actions for column_actions: 'mean', 'median', 'mode', 'zero', 'custom' (with custom_value), 'drop_rows', 'keep'. "
+                "Allowed outlier_actions: 'retain', 'clip_iqr', 'drop_outliers'. "
+                "Global booleans: 'remove_duplicates', 'standardize_text'. "
+                "JSON format:\n"
+                "{\n"
+                '  "remove_duplicates": true,\n'
+                '  "standardize_text": true,\n'
+                '  "column_actions": { "<column>": { "action": "<action>", "custom_value": "<value or null>" } },\n'
+                '  "outlier_actions": { "<column>": "<action>" },\n'
+                '  "reasoning": "<1-2 sentence explanation of your decisions>"\n'
+                "}"
+            )
+
+            schema_summary = {
+                "columns_with_missing": [
+                    {
+                        "name": c["name"],
+                        "type": c.get("data_type"),
+                        "category": c.get("type_category"),
+                        "missing": c.get("missing_count"),
+                        "median": c.get("median"),
+                        "mode": c.get("mode"),
+                    }
+                    for c in cols_with_missing
+                ],
+                "columns_with_outliers": [
+                    {"name": c["name"], "outliers": c.get("outlier_count")}
+                    for c in cols_with_outliers
+                ],
+                "duplicate_rows": duplicate_count,
+            }
+
+            user_msg = (
+                f"Dataset Summary:\n{json.dumps(schema_summary, indent=2)}\n\n"
+                f"User Instructions: \"{prompt_text}\"\n\n"
+                "Generate the JSON cleaning plan."
+            )
+
+            raw_resp = call_llm(
+                prompt=user_msg,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=600,
+            )
+
+            # Extract JSON block
+            json_match = re.search(r"\{.*\}", raw_resp, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+                if isinstance(parsed, dict):
+                    if "remove_duplicates" in parsed:
+                        remove_duplicates = bool(parsed["remove_duplicates"])
+                    if "standardize_text" in parsed:
+                        standardize_text = bool(parsed["standardize_text"])
+                    if "column_actions" in parsed and isinstance(parsed["column_actions"], dict):
+                        for k, v in parsed["column_actions"].items():
+                            if any(c["name"].lower() == k.lower() for c in columns):
+                                real_name = next(c["name"] for c in columns if c["name"].lower() == k.lower())
+                                if isinstance(v, dict):
+                                    column_actions[real_name] = v
+                                elif isinstance(v, str):
+                                    column_actions[real_name] = {"action": v}
+                    if "outlier_actions" in parsed and isinstance(parsed["outlier_actions"], dict):
+                        for k, v in parsed["outlier_actions"].items():
+                            if any(c["name"].lower() == k.lower() for c in columns):
+                                real_name = next(c["name"] for c in columns if c["name"].lower() == k.lower())
+                                outlier_actions[real_name] = str(v)
+                    reasoning = parsed.get("reasoning", "")
+                    llm_success = True
+        except Exception as e:
+            print(f"[AI Cleaning Agent] LLM prompt error, using rule-based parser: {e}")
+
+        # Intelligent rule-based fallback if LLM was unavailable or failed
+        if not llm_success:
+            p_lower = prompt_text.lower()
+            if "keep duplicate" in p_lower or "don't remove duplicate" in p_lower:
+                remove_duplicates = False
+            elif "duplicate" in p_lower or "dedup" in p_lower:
+                remove_duplicates = True
+
+            # Scan columns for natural language keywords
+            for col in cols_with_missing:
+                c_name = col["name"]
+                c_lower = c_name.lower()
+                cat = col.get("type_category", "text")
+
+                if c_lower in p_lower or "all" in p_lower:
+                    if "median" in p_lower and cat == "numeric":
+                        column_actions[c_name] = {"action": "median"}
+                    elif "mean" in p_lower and cat == "numeric":
+                        column_actions[c_name] = {"action": "mean"}
+                    elif "zero" in p_lower or " 0" in p_lower:
+                        column_actions[c_name] = {"action": "zero"} if cat == "numeric" else {"action": "custom", "custom_value": "0"}
+                    elif "mode" in p_lower or "frequent" in p_lower:
+                        column_actions[c_name] = {"action": "mode"}
+                    elif "unknown" in p_lower:
+                        column_actions[c_name] = {"action": "custom", "custom_value": "Unknown"}
+                    elif "drop" in p_lower or "delete" in p_lower or "remove" in p_lower:
+                        column_actions[c_name] = {"action": "drop_rows"}
+
+            for col in cols_with_outliers:
+                c_name = col["name"]
+                c_lower = c_name.lower()
+                if c_lower in p_lower or "outlier" in p_lower:
+                    if "clip" in p_lower or "cap" in p_lower:
+                        outlier_actions[c_name] = "clip_iqr"
+                    elif "drop" in p_lower or "remove" in p_lower:
+                        outlier_actions[c_name] = "drop_outliers"
+                    elif "keep" in p_lower:
+                        outlier_actions[c_name] = "retain"
+
+            reasoning = f"Configured cleaning decisions tailored to your instruction: \"{prompt_text}\"."
+    else:
+        # Auto-Clean reasoning
+        reasoning = (
+            f"Auto-Clean analyzed {len(columns)} columns: detected {profile.get('missing_cells_total', 0)} missing values "
+            f"and {duplicate_count} duplicate rows. Configured optimal median imputation for skewed numerics, "
+            f"standardized text replacement, and duplicate row purging."
+        )
+
+    # Format human-readable action badges for UI
+    summary_items = []
+    if remove_duplicates and duplicate_count > 0:
+        summary_items.append({
+            "type": "duplicate",
+            "title": "Remove Duplicate Rows",
+            "desc": f"Drop {duplicate_count} exact duplicate records",
+            "badge": "Deduplicate"
+        })
+    if standardize_text:
+        summary_items.append({
+            "type": "text",
+            "title": "Clean Whitespace",
+            "desc": "Trim leading/trailing spaces across all text columns",
+            "badge": "Standardize"
+        })
+
+    for col_name, act in column_actions.items():
+        action_name = act.get("action", "keep")
+        custom_val = act.get("custom_value")
+        if action_name == "custom":
+            desc = f"Fill missing cells with '{custom_val}'"
+        elif action_name == "median":
+            desc = "Impute missing cells with column median"
+        elif action_name == "mean":
+            desc = "Impute missing cells with column mean"
+        elif action_name == "mode":
+            desc = "Impute missing cells with most frequent value (mode)"
+        elif action_name == "zero":
+            desc = "Fill missing cells with 0"
+        elif action_name == "drop_rows":
+            desc = "Drop rows where this column is empty"
+        else:
+            desc = "Preserve existing missing values"
+
+        summary_items.append({
+            "type": "column",
+            "column": col_name,
+            "title": col_name,
+            "desc": desc,
+            "badge": action_name.capitalize()
+        })
+
+    for col_name, o_act in outlier_actions.items():
+        if o_act != "retain":
+            summary_items.append({
+                "type": "outlier",
+                "column": col_name,
+                "title": f"{col_name} (Outliers)",
+                "desc": "Clip extreme values to IQR fences" if o_act == "clip_iqr" else "Remove outlier rows",
+                "badge": o_act.replace("_", " ").title()
+            })
+
+    return {
+        "success": True,
+        "mode": mode,
+        "remove_duplicates": remove_duplicates,
+        "standardize_text": standardize_text,
+        "column_actions": column_actions,
+        "outlier_actions": outlier_actions,
+        "reasoning": reasoning,
+        "summary_items": summary_items,
+        "total_actions": len(summary_items)
+    }

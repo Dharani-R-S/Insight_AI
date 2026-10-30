@@ -141,6 +141,8 @@ def generate_bar(df: pd.DataFrame, x_col: str, y_col: str, rec: Dict) -> Dict:
         
         data = [
             {
+                "name": str(row[x_col]),
+                "value": float(np.round(row['sum'], 2)),
                 x_col: str(row[x_col]),
                 y_col: float(np.round(row['sum'], 2)),
                 "count": int(row['count']),
@@ -171,20 +173,44 @@ def generate_line(df: pd.DataFrame, x_col: str, y_col: str, rec: Dict) -> Dict:
         df_copy = df.copy()
         df_copy[y_col] = pd.to_numeric(df_copy[y_col], errors='coerce')
         
-        # Group by x_col and sum y_col
-        grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
-        
-        try:
-            grouped = grouped.sort_values(x_col)
-        except:
-            pass
+        # Try parsing x_col as date if applicable
+        x_col_str = str(x_col).lower()
+        if any(k in x_col_str for k in ['date', 'time', 'year', 'month', 'period', 'timestamp']):
+            # Prevent 4-digit calendar years from being parsed as epoch nanoseconds (Jan 1970)
+            numeric_s = pd.to_numeric(df_copy[x_col], errors='coerce')
+            valid_numeric = numeric_s.dropna()
+            is_calendar_year = (
+                len(valid_numeric) > len(df_copy) * 0.5 and
+                valid_numeric.between(1800, 2100).all() and
+                (valid_numeric == valid_numeric.round()).all()
+            )
+            if is_calendar_year:
+                df_copy['date_str'] = valid_numeric.astype(int).astype(str)
+                grouped = df_copy.groupby('date_str')[y_col].sum().reset_index()
+                grouped = grouped.sort_values('date_str')
+                x_key = 'date_str'
+            else:
+                parsed = pd.to_datetime(df_copy[x_col].astype(str), errors='coerce')
+                if parsed.notna().sum() > len(df_copy) * 0.3:
+                    df_copy['date_str'] = parsed.dt.strftime('%Y-%m')
+                    grouped = df_copy.groupby('date_str')[y_col].sum().reset_index()
+                    grouped = grouped.sort_values('date_str')
+                    x_key = 'date_str'
+                else:
+                    grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
+                    x_key = x_col
+        else:
+            grouped = df_copy.groupby(x_col)[y_col].sum().reset_index()
+            x_key = x_col
             
-        if len(grouped) > 40:
-            grouped = grouped.tail(40)
+        if len(grouped) > 30:
+            grouped = grouped.tail(30)
         
         data = [
             {
-                x_col: str(row[x_col])[:15],
+                "name": str(row[x_key]),
+                "value": float(np.round(row[y_col], 2)),
+                x_col: str(row[x_key]),
                 y_col: float(np.round(row[y_col], 2)),
             }
             for _, row in grouped.iterrows()
@@ -199,7 +225,7 @@ def generate_line(df: pd.DataFrame, x_col: str, y_col: str, rec: Dict) -> Dict:
             },
             "metadata": {
                 "rowCount": len(data),
-                "trend": "increasing" if len(data) > 1 and data[-1][y_col] > data[0][y_col] else "decreasing"
+                "trend": "increasing" if len(data) > 1 and data[-1]["value"] > data[0]["value"] else "decreasing"
             }
         }
     except Exception as e:
