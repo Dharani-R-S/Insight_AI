@@ -198,6 +198,7 @@ function getUserSession(userId) {
       tableName: null,
       columns: null,
       rowCount: null,
+      summaryStats: null,
     });
   }
   return userSessions.get(userId);
@@ -229,6 +230,8 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       tableName: response.data.table_name,
       columns: response.data.columns,
       rowCount: response.data.row_count,
+      summaryStats: response.data.summary_stats || currentSession.summaryStats,
+      summaryStats: response.data.summary_stats,
     };
 
     userSessions.set(req.user.id, updatedSession);
@@ -241,6 +244,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       row_count: updatedSession.rowCount,
       sample_rows: updatedSession.sampleRows,
       schema: updatedSession.schema,
+      summary_stats: updatedSession.summaryStats,
     });
   } catch (err) {
     console.error('❌ Upload error:', err.response?.data || err.message);
@@ -263,6 +267,7 @@ app.get('/api/datasets/current', requireAuth, (req, res) => {
     row_count: currentSession.rowCount,
     sample_rows: currentSession.sampleRows,
     schema: currentSession.schema,
+    summary_stats: currentSession.summaryStats,
   });
 });
 
@@ -483,7 +488,7 @@ app.post('/api/settings/test', requireAuth, async (req, res) => {
 });
 
 // ─── Data Transformation Proxies ───
-app.post('/api/transform/join', async (req, res) => {
+app.post('/api/transform/join', requireAuth, async (req, res) => {
   try {
     const pyRes = await axios.post(`${PYTHON_URL}/api/transform/join`, req.body);
     res.json(pyRes.data);
@@ -493,7 +498,7 @@ app.post('/api/transform/join', async (req, res) => {
   }
 });
 
-app.post('/api/transform/apply', async (req, res) => {
+app.post('/api/transform/apply', requireAuth, async (req, res) => {
   try {
     const pyRes = await axios.post(`${PYTHON_URL}/api/transform/apply`, req.body);
     res.json(pyRes.data);
@@ -502,6 +507,33 @@ app.post('/api/transform/apply', async (req, res) => {
     res.status(err.response?.status || 500).json({ error: err.response?.data?.detail || err.message });
   }
 });
+
+// ─── Vectorized Transform (Phase 3), Auto-Visualize (Phase 4) & Intelligence (Phase 5) Proxies ───
+const proxyToPython = async (req, res, targetPath) => {
+  try {
+    const headers = {};
+    if (req.headers.authorization) headers.authorization = req.headers.authorization;
+    const pyRes = await axios({
+      method: req.method,
+      url: `${PYTHON_URL}${targetPath}`,
+      data: req.body,
+      params: req.query,
+      headers,
+      timeout: 60000,
+    });
+    res.status(pyRes.status).json(pyRes.data);
+  } catch (err) {
+    console.error(`Proxy error for ${targetPath}:`, err.response?.data || err.message);
+    res.status(err.response?.status || 500).json(err.response?.data || { error: err.message });
+  }
+};
+
+app.post('/api/transform/compile', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/compile'));
+app.post('/api/transform/preview', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/preview'));
+app.post('/api/transform/commit', requireAuth, (req, res) => proxyToPython(req, res, '/api/transform/commit'));
+app.post('/api/visualize/auto', requireAuth, (req, res) => proxyToPython(req, res, '/api/visualize/auto'));
+app.post('/api/intelligence/root-cause', requireAuth, (req, res) => proxyToPython(req, res, '/api/intelligence/root-cause'));
+app.post('/api/intelligence/next-questions', requireAuth, (req, res) => proxyToPython(req, res, '/api/intelligence/next-questions'));
 
 // ─── POST /api/datasets/auto-visualize (protected) ───
 app.post('/api/datasets/auto-visualize', requireAuth, async (req, res) => {

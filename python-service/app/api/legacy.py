@@ -151,6 +151,9 @@ async def clean_data(request: CleanDataRequest):
         sample_df = df.head(5)
         sample_rows = sample_df.to_dict(orient='records')
         row_count = len(df)
+
+        from services.database import compute_dataset_summary_stats
+        summary_stats = compute_dataset_summary_stats(df)
         conn.close()
 
         print(f"🧹 Cleaned dataset ({db_path}): {initial_rows} -> {row_count} rows, {initial_cols} -> {len(columns)} cols")
@@ -162,6 +165,7 @@ async def clean_data(request: CleanDataRequest):
             "schema": schema,
             "sample_rows": sample_rows,
             "row_count": row_count,
+            "summary_stats": summary_stats,
             "cleaned_summary": {
                 "rows_removed": initial_rows - row_count,
                 "cols_removed": initial_cols - len(columns),
@@ -264,6 +268,35 @@ async def analyze_data(request: AnalyzeRequest):
         # Step 1: NL → SQL via Groq
         print(f"🧠 Converting to SQL: \"{question}\"")
         sql_query = nl_to_sql(question, schema, sample_rows)
+
+        if sql_query.startswith("CONVERSATIONAL:"):
+            msg = sql_query.replace("CONVERSATIONAL:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "conversational": True,
+                "out_of_bounds": False,
+                "message": msg
+            }
+
+        if sql_query.startswith("OUT_OF_BOUNDS:"):
+            msg = sql_query.replace("OUT_OF_BOUNDS:", "").strip()
+            return {
+                "sql_query": "",
+                "table_result": [],
+                "chart_base64": "",
+                "stats": {},
+                "insights": [msg],
+                "prediction": {},
+                "out_of_bounds": True,
+                "conversational": False,
+                "message": msg
+            }
+
         result["sql_query"] = sql_query
         print(f"📝 SQL: {sql_query}")
 

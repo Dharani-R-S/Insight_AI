@@ -8,7 +8,7 @@
 [![SQLGlot](https://img.shields.io/badge/Security-SQLGlot%20AST-4CAF50.svg?style=flat)](https://github.com/tobymao/sqlglot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-InsightAI is an enterprise-grade, conversational business intelligence, data engineering, and predictive analytics platform. It empowers data teams and business stakeholders to upload diverse datasets, execute multi-step vectorized data transformations (Power Query backend), query datasets in plain English using LLM Text-to-SQL, perform AI-powered root-cause variance analysis with grounded executive summaries, receive intelligent follow-up question suggestions, and interact with real-time executive dashboards, force-directed knowledge graphs, and predictive forecasting models.
+InsightAI is an enterprise-grade, conversational business intelligence, data engineering, and predictive analytics platform. It empowers data teams and business stakeholders to upload diverse datasets, execute multi-step vectorized data transformations (Power Query backend), query datasets in plain English using LLM Text-to-SQL with privacy-aware guardrails, perform AI-powered root-cause variance analysis with grounded executive summaries, receive intelligent follow-up question suggestions, and interact with real-time executive dashboards, force-directed knowledge graphs, and predictive forecasting models.
 
 ---
 
@@ -24,8 +24,9 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 ┌────────────────────────────────────────┐ ┌────────────────────────────────────┐
 │      Express Gateway (Port 5000)       │ │ Python FastAPI Service (Port 8000) │
 │  • Multi-user session persistence      │ │  • Phase 1: DuckDB OLAP & Auth     │
-│  • Static distribution proxy           │ │  • Phase 2: NL Text-to-SQL & AST   │
+│  • JWT Auth enforcement on proxy routes│ │  • Phase 2: NL Text-to-SQL & AST   │
 │  • Uploads file-stream gateway         │ │  • Phase 3: Power Query CTE Engine │
+│  • Session summary statistics sync     │ │  • Phase 4: Auto-Visualization     │
 │                                        │ │  • Phase 5: AI Intelligence Engine │
 └────────────────────────────────────────┘ └─────────────────┬──────────────────┘
                                                              │
@@ -37,8 +38,8 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
                     │ • Stateless CTE Chaining │ │ • Text-to-SQL         │ │ • Root-Cause Analysis    │
                     │ • Snappy Parquet Storage  │ │ • Schema Injection    │ │ • Variance Decomposition │
                     │ • Zero-Pandas Engine     │ │ • SQLGlot AST Guard   │ │ • Next Best Question     │
-                    └──────────────────────────┘ └───────────────────────┘ │ • Grounded Narratives    │
-                                                                          └──────────────────────────┘
+                    └──────────────────────────┘ │ • PII Privacy Shield  │ │ • Grounded Narratives    │
+                                                 └───────────────────────┘ └──────────────────────────┘
 ```
 
 ---
@@ -51,10 +52,12 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 - **JWT Authentication & Native Bcrypt**: Secure user registration, authentication, and session inspection with signed JWT access tokens.
 - **Stateless Column Profiling**: Computes exact row counts, distinct values, null distributions, data types, and sample previews directly from Parquet metadata.
 
-### Phase 2: Conversational Analytics & AST Security Validator
+### Phase 2: Conversational Analytics, Security & Privacy Guardrails
 - **Natural Language to SQL (`POST /api/ask`)**: Translates plain-English business questions into executable DuckDB SQL queries via Groq LLMs (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`).
-- **Dynamic Schema Context Injection**: Automatically introspects active dataset schema, column types, and sample data values to ground LLM query generation in precise facts.
+- **Dynamic Schema Context Injection**: Automatically introspects active dataset schema and column types to ground LLM query generation in precise facts.
 - **SQLGlot AST Security Firewall**: Parses and walks the Abstract Syntax Tree (AST) of generated SQL queries to guarantee **read-only `SELECT`/`WITH` operations**. Blocks all destructive DDL/DML mutations (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, `PRAGMA`, multi-statement semicolons).
+- **PII & Privacy Protection Shield**: Raw uploaded records are quarantined from external LLM providers by default (`allow_sample_rows: false`). When opted in, automated PII sanitization redacts emails, phone numbers, SSNs, credit cards, passwords, and compensation data before prompt transmission.
+- **Conversational Intent & Out-of-Bounds Guardrails**: Multi-word polite phrases (`"good morning"`, `"thank you"`, `"what is this"`) receive friendly conversational guidance, while generic interrogatives without BI/dataset intent are safely blocked.
 - **Statistical Summaries & Predictive Forecasting**: Automated linear regression and statistical trend analysis.
 
 ### Phase 3: Vectorized Data Transformation Engine (Power Query Backend)
@@ -69,13 +72,20 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
   - **Structural Operations**: `Rename` (DuckDB `RENAME`), `Sort` (`ORDER BY ASC/DESC`), `Drop Duplicates` (`DISTINCT ON`), `Select Columns`, `Drop Columns` (`EXCLUDE`).
 - **Stateless Pipeline Preview (`POST /api/transform/preview`)**: Fast interactive preview for UI with configurable row limit (default: 100).
 - **Physical Parquet Materialization (`POST /api/transform/commit`)**: Persists the transformed dataset into a newly minted, compressed `.parquet` file using DuckDB native `COPY (...) TO ... (FORMAT PARQUET)`.
+- **Authenticated Gateway Endpoints**: All transformation compilation, preview, commit, and join routes are protected by Express `requireAuth` middleware.
+
+### Phase 4: Automated Visualization & Semantic Metric Layer
+- **Semantic Metric Precedence**: Prioritizes percentage and rate metrics (`pct`, `margin`, `rate`, `ratio`) ahead of currency keywords to eliminate classification conflicts (e.g., `profit_margin_pct` renders as `12.5%`, not `$12.50`).
+- **Intelligent Chart Selection**: Automatically infers optimal visual types (Bar, Line, Area, Scatter, Histogram, Pie) based on dimensionality, variance, and cardinality.
+- **Chronological Time-Series Protection**: Accurately recognizes numeric calendar years (e.g. `release_year` 2020) as temporal axes instead of classifying them as scatter plots or converting them to epoch nanoseconds (`Jan 1970`).
+- **Verified Data Completeness**: Reports data completeness calculated from actual non-null cells across the full dataset rather than assuming 100%.
 
 ### Phase 5: AI & Conversational Intelligence Engine
 - **Root-Cause "Why" Analysis (`POST /api/intelligence/root-cause`)**: Decomposes metric variance between two time periods into its top contributing dimensional drivers. All heavy computation (grouped aggregations, absolute/percentage change, ranking) is offloaded to DuckDB — never to the LLM.
 - **DuckDB Statistical Offloading**: The `DiagnosticAnalyzer` writes native DuckDB SQL that calculates variance grouped by categorical columns (Region, Category, etc.), sorts by magnitude, and extracts only the top 3 drivers.
 - **Grounded LLM Narration**: Passes ONLY the pre-computed top 3 statistical drivers to the Groq LLM. A strict system prompt forbids the LLM from hallucinating reasons outside of the provided statistical data. The output is exactly 2 sentences.
-- **Next Best Question (`POST /api/intelligence/next-questions`)**: Analyzes the current dataset schema and last query context to dynamically generate 3 actionable follow-up question suggestion chips. The LLM returns these strictly as a JSON list of strings.
-- **Deterministic Fallbacks**: When the LLM is unavailable, both services degrade gracefully — the root-cause summary is constructed from raw statistics, and follow-up questions are generated from schema metadata.
+- **Next Best Question (`POST /api/intelligence/next-questions`)**: Analyzes the current dataset schema and last query context to dynamically generate 3 actionable follow-up question suggestion chips. Returns strictly as a JSON list of strings.
+- **Robust Deterministic Fallbacks**: Gracefully handles string schemas and network/LLM downtime without `UnboundLocalError` or runtime exceptions.
 
 ---
 
@@ -85,8 +95,8 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 
 | Method | Route | Description | Auth Required |
 |---|---|---|---|
-| `POST` | `/api/intelligence/root-cause` | Decomposes metric variance into top dimensional drivers with LLM narrative | Optional |
-| `POST` | `/api/intelligence/next-questions` | Generates 3 follow-up question suggestion chips from schema + query context | Optional |
+| `POST` | `/api/intelligence/root-cause` | Decomposes metric variance into top dimensional drivers with LLM narrative | Yes (Gateway) |
+| `POST` | `/api/intelligence/next-questions` | Generates 3 follow-up question suggestion chips from schema + query context | Yes (Gateway) |
 
 #### Root-Cause Variance Analysis Request (`POST /api/intelligence/root-cause`):
 ```json
@@ -118,9 +128,11 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 
 | Method | Route | Description | Auth Required |
 |---|---|---|---|
-| `POST` | `/api/transform/preview` | Compiles pipeline JSON into CTE SQL and returns preview rows & metadata | Optional |
-| `POST` | `/api/transform/commit` | Materializes pipeline into a new `.parquet` file and returns schema | Optional |
-| `POST` | `/api/transform/compile` | Returns compiled CTE SQL string and step summary without execution | Optional |
+| `POST` | `/api/transform/preview` | Compiles pipeline JSON into CTE SQL and returns preview rows & metadata | Yes (Gateway) |
+| `POST` | `/api/transform/commit` | Materializes pipeline into a new `.parquet` file and returns schema | Yes (Gateway) |
+| `POST` | `/api/transform/compile` | Returns compiled CTE SQL string and step summary without execution | Yes (Gateway) |
+| `POST` | `/api/transform/join` | Joins two datasets on specified keys | Yes (Gateway) |
+| `POST` | `/api/visualize/auto` | Generates automated visual recommendations | Yes (Gateway) |
 
 #### Sample Pipeline Request Payload (`POST /api/transform/preview`):
 ```json
@@ -186,6 +198,7 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 | `POST` | `/api/v1/datasets/ingest` | Stateless file ingestion directly into compressed Parquet storage | Yes |
 | `POST` | `/api/v1/datasets/query` | Execute safe vectorized DuckDB SQL queries with row limits | Yes |
 | `GET` | `/api/v1/datasets/{id}/schema` | Inspect dataset schema, column profiling & sample preview | Yes |
+| `POST` | `/api/datasets/clean` | Clean dataset (imputation, deduplication) and refresh summary stats | Yes |
 | `GET` | `/health` | Service health probe & engine version info | No |
 
 ---
@@ -201,7 +214,7 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 │   │   │   ├── AutoDashboard.jsx           # AI Recommended Dashboard views
 │   │   │   ├── ChatPanel.jsx               # Natural language query chat panel
 │   │   │   ├── ColumnProfilePanel.jsx      # Deep column statistics modal
-│   │   │   ├── DashboardPage.jsx           # Executive overview & KPI cards
+│   │   │   ├── DashboardPage.jsx           # Executive overview, KPI cards & completeness
 │   │   │   ├── DataCleaningModal.jsx       # Quick dataset cleaning dialog
 │   │   │   ├── DataTable.jsx               # Tabular data viewer
 │   │   │   ├── DataTransformStudio.jsx     # Power Query transformation studio
@@ -225,11 +238,12 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 │   │   ├── api/
 │   │   │   ├── routes/
 │   │   │   │   ├── analytics.py            # POST /api/ask natural language SQL endpoint
-│   │   │   │   └── transform.py            # POST /api/transform preview, commit, compile
+│   │   │   │   ├── transform.py            # POST /api/transform preview, commit, compile
+│   │   │   │   └── visualization.py        # Automated visualization routes
 │   │   │   ├── v1/
 │   │   │   │   ├── auth.py                 # JWT Signup & Login endpoints
 │   │   │   │   └── datasets.py             # Parquet Ingestion, Query & Schema endpoints
-│   │   │   ├── legacy.py                   # Legacy SQLite / BI proxy compatibility routes
+│   │   │   ├── legacy.py                   # Legacy SQLite / BI proxy routes & clean data
 │   │   │   └── router.py                   # API router aggregator
 │   │   ├── core/
 │   │   │   ├── config.py                   # Pydantic Settings, memory limits & paths
@@ -239,30 +253,34 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 │   │   │   └── session.py                  # Metadata database engine & sessionmaker
 │   │   ├── models/
 │   │   │   ├── transform.py                # Pydantic Discriminated Union Step Models
-│   │   │   └── user.py                     # SQLAlchemy User entity
-│   │   ├── schemas/
-│   │   │   ├── auth.py                     # Auth request & response schemas
-│   │   │   ├── dataset.py                  # Dataset schema, ColumnInfo & QueryResult
-│   │   │   └── transform.py                # Transformation schemas alias
-│   │   ├── services/
-│   │   │   ├── auth_service.py             # Auth business logic
-│   │   │   ├── duckdb_engine.py            # Vectorized stateless DuckDB OLAP engine
-│   │   │   ├── llm_service.py              # Groq Text-to-SQL & Context Formatter
-│   │   │   ├── sql_validator.py            # SQLGlot AST read-only security validator
-│   │   │   └── transformation_compiler.py  # CTE Chaining Power Query Compiler
-│   │   └── main.py                         # FastAPI application entrypoint
+│   │   │   ├── user.py                     # SQLAlchemy User entity
+│   │   │   └── visualization.py            # Semantic metric & visualization models
+│   │   └── services/
+│   │       ├── duckdb_engine.py            # Vectorized stateless DuckDB OLAP engine
+│   │       ├── llm_service.py              # Groq Text-to-SQL & Context Formatter
+│   │       ├── sql_validator.py            # SQLGlot AST read-only security validator
+│   │       └── transformation_compiler.py  # CTE Chaining Power Query Compiler
 │   ├── models/
-│   │   └── intelligence.py                  # Phase 5 Pydantic schemas (Variance/NextQ)
+│   │   └── intelligence.py                 # Phase 5 Pydantic schemas (Variance/NextQ)
 │   ├── services/
-│   │   ├── diagnostic_engine.py             # DuckDB variance decomposition analyzer
-│   │   └── recommendation_engine.py         # Grounded LLM narrative & question gen
+│   │   ├── analysis.py                     # Statistics & robust non-nan correlation engine
+│   │   ├── chart_generator.py              # Bar, line, scatter generation & calendar logic
+│   │   ├── charts.py                       # Smart chart type detection & Plotly rendering
+│   │   ├── database.py                     # Summary statistics & percentage precedence
+│   │   ├── diagnostic_engine.py            # DuckDB variance decomposition analyzer
+│   │   ├── feature_analyzer.py             # Feature analysis & deduplicated recommendations
+│   │   ├── llm.py                          # Query guardrails, PII sanitization & NL to SQL
+│   │   └── recommendation_engine.py        # Grounded LLM narrative & question generation
 │   ├── storage/
 │   │   ├── parquet/                        # Compressed Parquet dataset storage
 │   │   └── uploads/                        # Temporary streaming upload buffers
+│   ├── test_copilot_review_fixes.py        # PR Review Verification Suite (All 8 fixes)
+│   ├── test_llm_core.py                    # NL to SQL fast paths, OOB & insight tests
 │   ├── test_phase1.py                      # Phase 1 test suite (Auth, DuckDB Ingest/Query)
 │   ├── test_phase2.py                      # Phase 2 test suite (SQLGlot AST, LLM Text-to-SQL)
 │   ├── test_phase3.py                      # Phase 3 test suite (CTE Chaining, Power Query)
 │   ├── test_phase4.py                      # Phase 4 test suite (Visualization Engine)
+│   ├── test_phase5.py                      # Phase 5 test suite (AI Intelligence & Root-Cause)
 │   ├── test_master_suite.py                # Comprehensive Master Architecture Test Suite
 │   ├── requirements.txt                    # Production backend dependencies
 │   └── main.py                             # Root microservice launcher wrapper
@@ -316,6 +334,7 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
    GROQ_MODEL=openai/gpt-oss-120b
    DUCKDB_MEMORY_LIMIT=2GB
    DUCKDB_THREADS=4
+   INSIGHTAI_ALLOW_SAMPLE_ROWS=false
    ```
 
 5. Launch the microservice:
@@ -355,6 +374,18 @@ InsightAI is an enterprise-grade, conversational business intelligence, data eng
 Run any of the automated test suites in `python-service`:
 
 ```powershell
+# Run PR Review Verification Suite (Validates all 8 GitHub Review Fixes)
+python test_copilot_review_fixes.py
+
+# Run Phase 5 AI & Conversational Intelligence Test Suite
+python test_phase5.py
+
+# Run Phase 4 Visualization & Semantic Metric Suite
+python test_phase4.py
+
+# Run LLM Core Logic, Fast Paths & Guardrails Suite
+python test_llm_core.py
+
 # Run Master Comprehensive Architecture & Edge Case Suite (Phase 1, 2, 3)
 python test_master_suite.py
 
@@ -378,6 +409,9 @@ python test_phase1.py
 - ✅ **DuckDB Statistical Offloading**: Variance decomposition runs entirely in DuckDB — raw data never reaches the LLM.
 - ✅ **Grounded LLM Narratives**: Executive summaries are constrained to pre-computed statistical drivers only.
 - ✅ **Next Best Question**: Schema-aware follow-up suggestions returned as a strict JSON array of 3 strings.
+- ✅ **PII Quarantining & Redaction**: Sample uploaded rows are masked and opt-in protected before transmission to external LLMs.
+- ✅ **Gateway Proxy Protection**: Express routes enforce authentication for dataset modification and intelligence endpoints.
+- ✅ **Semantic Metric Precedence**: Percentage formatting is given priority over currency keywords to prevent misclassification.
 
 ---
 
