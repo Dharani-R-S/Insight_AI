@@ -12,6 +12,7 @@ import {
   Sparkle,
   Lightning,
   PaperPlaneTilt,
+  PaperPlaneRight,
   CheckCircle,
   WarningCircle
 } from '@phosphor-icons/react';
@@ -534,9 +535,11 @@ export default function ChatPanel({
           <button
             type="submit"
             disabled={!input.trim() || isLoading || !hasDataset}
-            className="btn-primary w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs transition-all disabled:opacity-40 cursor-pointer"
+            className="w-8 h-8 rounded-lg flex items-center justify-center p-0 shrink-0 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] text-white shadow-xs"
+            title="Send query (Enter)"
+            aria-label="Send query"
           >
-            <ArrowUp size={14} weight="bold" />
+            <PaperPlaneRight size={15} weight="fill" className="text-white shrink-0 ml-0.5" />
           </button>
         </div>
       </form>
