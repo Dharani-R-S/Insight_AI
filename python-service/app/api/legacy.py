@@ -1,3 +1,4 @@
+from typing import Optional, Dict, Any, List
 """
 Legacy API Router for InsightAI Backend.
 Preserves compatibility with Express server and legacy BI / SQLite endpoints
@@ -31,6 +32,8 @@ from services.auto_visualize import auto_visualize
 from services.chart_generator import generate_multiple_chart_data
 from services.feature_analyzer import FeatureAnalyzer
 from services.transform_service import execute_join, apply_transformation_step
+from services.data_profiler import profile_dataset, clean_dataset_interactive, revert_to_original
+from services.dashboard_engine import generate_dataset_dashboard, generate_smart_queries
 
 router = APIRouter()
 
@@ -70,12 +73,40 @@ class AutoDashboardRequest(BaseModel):
     query: str = "SELECT * FROM data"
 
 
+class ProfileQualityRequest(BaseModel):
+    db_path: str
+
+
+@router.post("/profile-quality")
+async def profile_quality_endpoint(request: ProfileQualityRequest):
+    """
+    Detect missing values, duplicates, inconsistent types, invalid formats, and outliers.
+    """
+    if not os.path.exists(request.db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    try:
+        report = profile_dataset(request.db_path)
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Quality profiling failed: {str(e)}")
+
+
+
+class CleanPlanRequest(BaseModel):
+    db_path: str
+    prompt: Optional[str] = None
+
 class CleanDataRequest(BaseModel):
     db_path: str
-    impute_numeric: str = "mean"  # "mean", "median", "mode", "zero", "none"
-    fill_text: str = "N/A"
-    drop_duplicates: bool = True
-    drop_empty_cols: bool = True
+    remove_duplicates: Optional[bool] = None
+    drop_duplicates: Optional[bool] = None
+    column_actions: Optional[Dict[str, Any]] = None
+    outlier_actions: Optional[Dict[str, str]] = None
+    standardize_text: Optional[bool] = True
+    preview_only: Optional[bool] = False
+    impute_numeric: Optional[str] = None
+    fill_text: Optional[str] = None
+    drop_empty_cols: Optional[bool] = None
 
 
 class ExportDataRequest(BaseModel):
@@ -84,95 +115,94 @@ class ExportDataRequest(BaseModel):
     filename: str = "transformed_dataset"
 
 
+# ─── POST /ai-clean-plan ───
+@router.post("/ai-clean-plan")
+async def ai_clean_plan(request: CleanPlanRequest):
+    """
+    Generate an AI-driven or heuristic cleaning plan for the dataset.
+    """
+    if not os.path.exists(request.db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    try:
+        from services.data_profiler import generate_ai_cleaning_plan
+        return generate_ai_cleaning_plan(db_path=request.db_path, user_prompt=request.prompt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─── POST /clean-data ───
 @router.post("/clean-data")
 async def clean_data(request: CleanDataRequest):
     """
-    Data Cleaning & Preprocessing Suite:
-    - Fills numeric missing values (mean, median, mode, or zero)
-    - Replaces missing text entries with fill_text ("N/A")
-    - Removes exact duplicate rows
-    - Drops completely empty columns
-    - Re-writes clean table into SQLite database
+    Interactive, column-level data cleaning suite.
+    Supports preview mode and non-destructive backups in SQLite.
     """
     db_path = request.db_path
     if not os.path.exists(db_path):
         raise HTTPException(status_code=404, detail="Database file not found")
 
-    import sqlite3
     try:
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql("SELECT * FROM data", conn)
-        initial_rows = len(df)
-        initial_cols = len(df.columns)
+        rem_dups = request.remove_duplicates
+        if rem_dups is None:
+            rem_dups = request.drop_duplicates if request.drop_duplicates is not None else False
 
-        # 1. Drop completely empty columns
-        if request.drop_empty_cols:
-            df = df.dropna(how="all", axis=1)
+        col_actions = request.column_actions or {}
+        # Convert legacy options if column_actions not passed
+        if not col_actions and (request.impute_numeric or request.fill_text):
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cur = conn.execute("PRAGMA table_info(data)")
+            cols_info = cur.fetchall()
+            conn.close()
 
-        # 2. Remove duplicate rows
-        if request.drop_duplicates:
-            df = df.drop_duplicates()
+            for c in cols_info:
+                c_name, c_type = c[1], c[2].lower()
+                is_num = any(t in c_type for t in ["int", "real", "float", "num"])
+                if is_num and request.impute_numeric and request.impute_numeric != "none":
+                    col_actions[c_name] = {"action": request.impute_numeric}
+                elif not is_num and request.fill_text:
+                    col_actions[c_name] = {"action": "custom", "custom_value": request.fill_text}
 
-        # 3. Numeric imputation
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        for col in numeric_cols:
-            if df[col].isnull().any():
-                if request.impute_numeric == "mean":
-                    val = df[col].mean()
-                elif request.impute_numeric == "median":
-                    val = df[col].median()
-                elif request.impute_numeric == "zero":
-                    val = 0
-                elif request.impute_numeric == "mode":
-                    mode_vals = df[col].mode()
-                    val = mode_vals.iloc[0] if not mode_vals.empty else 0
-                else:
-                    val = None
+        result = clean_dataset_interactive(
+            db_path=db_path,
+            remove_duplicates=bool(rem_dups),
+            column_actions=col_actions,
+            outlier_actions=request.outlier_actions or {},
+            standardize_text=bool(request.standardize_text),
+            preview_only=bool(request.preview_only),
+        )
 
-                if val is not None:
-                    df[col] = df[col].fillna(val)
+        # If summary_stats can be computed on cleaned df, attach it
+        if not request.preview_only:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                cleaned_df = pd.read_sql("SELECT * FROM data", conn)
+                conn.close()
+                from services.database import compute_dataset_summary_stats
+                result["summary_stats"] = compute_dataset_summary_stats(cleaned_df)
+            except Exception:
+                pass
 
-        # 4. Text / Categorical filling
-        text_cols = df.select_dtypes(include=['object']).columns
-        for col in text_cols:
-            if df[col].isnull().any():
-                df[col] = df[col].fillna(request.fill_text)
-
-        # Re-write cleaned dataframe to SQLite
-        df.to_sql('data', conn, if_exists='replace', index=False)
-
-        # Fetch updated schema and sample rows
-        cursor = conn.execute("PRAGMA table_info(data)")
-        columns_info = cursor.fetchall()
-        schema = {col_info[1]: col_info[2] for col_info in columns_info}
-        columns = list(schema.keys())
-
-        sample_df = df.head(5)
-        sample_rows = sample_df.to_dict(orient='records')
-        row_count = len(df)
-
-        from services.database import compute_dataset_summary_stats
-        summary_stats = compute_dataset_summary_stats(df)
-        conn.close()
-
-        print(f"🧹 Cleaned dataset ({db_path}): {initial_rows} -> {row_count} rows, {initial_cols} -> {len(columns)} cols")
-
-        return {
-            "db_path": db_path,
-            "table_name": "data",
-            "columns": columns,
-            "schema": schema,
-            "sample_rows": sample_rows,
-            "row_count": row_count,
-            "summary_stats": summary_stats,
-            "cleaned_summary": {
-                "rows_removed": initial_rows - row_count,
-                "cols_removed": initial_cols - len(columns),
-            }
-        }
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Data cleaning failed: {str(e)}")
+
+
+class RevertOriginalRequest(BaseModel):
+    db_path: str
+
+
+@router.post("/revert-original")
+async def revert_original_endpoint(request: RevertOriginalRequest):
+    """
+    Restore 'data' from 'data_original' backup.
+    """
+    if not os.path.exists(request.db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    try:
+        return revert_to_original(request.db_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reverting dataset failed: {str(e)}")
 
 
 ALLOWED_EXTENSIONS = {'.csv', '.tsv', '.tab', '.txt', '.xlsx', '.xls', '.xlsm', '.xlsb', '.json', '.jsonl', '.parquet'}
@@ -254,6 +284,23 @@ async def analyze_data(request: AnalyzeRequest):
     db_path = request.db_path
     schema = request.schema
     sample_rows = request.sample_rows
+
+    # If schema or sample rows are missing, introspect directly from SQLite
+    if (not schema or not sample_rows) and db_path and os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(data)")
+            cols_info = cur.fetchall()
+            if not schema and cols_info:
+                schema = {c[1]: c[2] for c in cols_info}
+            if not sample_rows and cols_info:
+                sample_df = pd.read_sql("SELECT * FROM data LIMIT 5", conn)
+                sample_rows = json.loads(sample_df.to_json(orient='records'))
+            conn.close()
+        except Exception as e:
+            print(f"Introspection warning: {e}")
 
     result = {
         "sql_query": "",
@@ -460,61 +507,31 @@ async def generate_charts(request: GenerateChartsRequest):
 @router.post("/analyze/auto-dashboard")
 async def auto_dashboard(request: AutoDashboardRequest):
     """
-    Generate a complete dashboard with multiple related visualizations.
-    AI analyzes data and creates 6-8 charts showing different aspects.
+    Generate dataset-aware dashboard with dynamic KPIs and adaptive visualizations.
     """
     try:
-        print(f"\n🎨 Auto-dashboard generation...")
-        
-        # Get the dataset
+        print("Generating dynamic dataset dashboard...")
         df = None
-        if request.db_path:
+        if request.db_path and os.path.exists(request.db_path):
             import sqlite3
             conn = sqlite3.connect(request.db_path)
-            cursor = conn.cursor()
-            cursor.execute(request.query or "SELECT * FROM data")
-            cols = [description[0] for description in cursor.description]
-            rows = cursor.fetchall()
+            df = pd.read_sql(request.query or "SELECT * FROM data", conn)
             conn.close()
-            df = pd.DataFrame(rows, columns=cols)
             print(f"   Loaded from DB: {len(df)} rows, {len(df.columns)} columns")
-        
         elif request.sample_rows:
             df = pd.DataFrame(request.sample_rows)
-            print(f"   Using sample data: {len(df)} rows, {len(df.columns)} columns")
-        
+            print(f"   Using sample rows: {len(df)} rows, {len(df.columns)} columns")
         else:
-            return {
-                "charts": [],
-                "error": "No dataset provided"
-            }
-        
-        # Use FeatureAnalyzer to generate intelligent dashboard
-        analyzer = FeatureAnalyzer()
-        charts = analyzer.generate_dashboard(df)
-        
-        print(f"   ✅ Generated {len(charts)} dashboard charts")
-        
-        return {
-            "charts": charts,
-            "summary": {
-                "total": len(charts),
-                "dataset_info": {
-                    "rows": len(df),
-                    "columns": len(df.columns),
-                }
-            }
-        }
-    
+            return {"kpis": None, "charts": [], "error": "No dataset provided"}
+
+        result = generate_dataset_dashboard(df)
+        print(f"   ✅ Generated {len(result.get('charts', []))} charts and dynamic KPIs")
+        return result
     except Exception as e:
         print(f"❌ Dashboard generation error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {
-            "charts": [],
-            "error": str(e)
-        }
-
+        return {"kpis": None, "charts": [], "error": str(e)}
 
 # ─── POST /recommend-queries ───
 class RecommendQueriesRequest(BaseModel):
@@ -526,86 +543,29 @@ class RecommendQueriesRequest(BaseModel):
 @router.post("/recommend-queries")
 async def recommend_queries(req: RecommendQueriesRequest):
     """
-    Generate natural language analytical questions tailored to the uploaded dataset using AI (Groq).
+    Generate natural language analytical questions tailored strictly to the active dataset.
     """
     try:
-        from services.llm import call_llm
-        cols_info = []
-        for col in req.columns:
-            dtype = req.schema_info.get(col, "unknown") if req.schema_info else "unknown"
-            cols_info.append(f"{col} ({dtype})")
-        cols_str = ", ".join(cols_info) if cols_info else ", ".join(req.columns)
-
-        sample_str = ""
-        if req.sample_rows and len(req.sample_rows) > 0:
-            import json
-            sample_str = f"\nSample row: {json.dumps(req.sample_rows[0])}"
-
-        prompt = f"""You are a data analytics AI assistant.
-Given this dataset schema:
-Columns: {cols_str}{sample_str}
-
-Generate 6 clear, diverse, and practical natural language questions that a business user would ask about this specific data (for example: 'Show total sales per region', 'Average customer age by gender', 'Top 5 customers by acquisition cost', 'Distribution of customer age').
-
-STRICT RULES:
-1. Every query must use concepts or columns present in the dataset.
-2. Formulate each as a concise phrase (4-8 words).
-3. Output ONLY a valid JSON array of 6 strings, e.g. ["Query 1", "Query 2", "Query 3", "Query 4", "Query 5", "Query 6"]. No markdown, no commentary."""
-
-        raw = call_llm(
-            prompt=prompt,
-            system_prompt="Output ONLY a JSON array of 6 strings. No markdown code blocks.",
-            temperature=0.3,
-            max_tokens=300,
+        queries_data = generate_smart_queries(
+            columns=req.columns,
+            schema=req.schema_info,
+            sample_rows=req.sample_rows
         )
-
-        import json
-        clean_raw = raw.strip()
-        clean_raw = re.sub(r'^```json\s*', '', clean_raw)
-        clean_raw = re.sub(r'^```\s*', '', clean_raw)
-        clean_raw = re.sub(r'\s*```$', '', clean_raw).strip()
-        
-        parsed = json.loads(clean_raw)
-        if isinstance(parsed, dict) and "queries" in parsed:
-            parsed = parsed["queries"]
-        if isinstance(parsed, list) and len(parsed) > 0:
-            return {"queries": [str(q).strip(' "\'') for q in parsed[:8]]}
+        return {
+            "queries": [q["question"] for q in queries_data],
+            "categorized_queries": queries_data
+        }
     except Exception as e:
-        print(f"⚠️ AI query recommendation fallback: {e}")
-
-    # Fallback heuristic queries based on column names
-    fallback = []
-    num_cols = [c for c, d in (req.schema_info or {}).items() if any(t in str(d).lower() for t in ['int', 'float', 'real', 'num', 'cost', 'sales', 'price', 'amount', 'age', 'score', 'salary'])]
-    cat_cols = [c for c, d in (req.schema_info or {}).items() if c not in num_cols and not c.lower().endswith('_id')]
-    
-    if not num_cols:
-        num_cols = [c for c in req.columns if any(k in c.lower() for k in ['sales', 'cost', 'price', 'amount', 'revenue', 'profit', 'age', 'rate', 'total', 'count', 'qty', 'score'])]
-    if not cat_cols:
-        cat_cols = [c for c in req.columns if c not in num_cols and not c.lower().endswith('_id')]
-    
-    clean_n = lambda s: s.replace('_', ' ').title()
-    if num_cols and cat_cols:
-        fallback.append(f"Show total {clean_n(num_cols[0])} per {clean_n(cat_cols[0])}")
-        fallback.append(f"Average {clean_n(num_cols[0])} by {clean_n(cat_cols[0])}")
-    if len(cat_cols) > 1 and num_cols:
-        fallback.append(f"Compare {clean_n(num_cols[0])} across {clean_n(cat_cols[1])}")
-    if num_cols:
-        fallback.append(f"Distribution of {clean_n(num_cols[0])}")
-        if len(num_cols) > 1:
-            fallback.append(f"Relationship between {clean_n(num_cols[0])} and {clean_n(num_cols[1])}")
-    if cat_cols:
-        fallback.append(f"Top 5 {clean_n(cat_cols[0])} by count")
-    
-    if not fallback:
-        fallback = [
-            "Show total sales per region",
-            "Top 5 categories by count",
-            "Distribution of records",
-            "Average values by category",
-        ]
-        
-    return {"queries": fallback}
-
+        print(f"⚠️ Query recommendation fallback: {e}")
+        return {
+            "queries": [
+                "What is the distribution of records across categories?",
+                "Which values appear most frequently?",
+                "How do key metrics vary over time?",
+                "Are there any missing or null values in this dataset?"
+            ],
+            "categorized_queries": []
+        }
 
 # ─── Settings Endpoints ───
 class SettingsUpdateRequest(BaseModel):

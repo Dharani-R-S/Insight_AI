@@ -19,5 +19,54 @@
     "email": "dharani@gmail.com",
     "password_hash": "$2b$10$PVWLSScSLYmSrnIDGXfxTOYGq0OMvK5tekIAvaOw4hnqJMZK6EAIe",
     "created_at": "2026-09-25T16:31:25.343Z"
+  },
+  {
+    "id": 1793282792619,
+    "name": "Test Verify",
+    "email": "verify_1793282792461@example.com",
+    "password_hash": "$2b$10$Y9D10tz3N72.Hjk8.c8Lou1mk3RdEcl1qKnVt7tUwVUlukjTy26SO",
+    "created_at": "2026-10-29T14:06:32.619Z"
+  },
+  {
+    "id": 1793282880019,
+    "name": "Proxy Verify",
+    "email": "proxy_1793282879876@example.com",
+    "password_hash": "$2b$10$6UxB34j.N9vy/2JRiZ2pf.wea2N/EBN2RBRQuZeKHrwmA1U5CM9IK",
+    "created_at": "2026-10-29T14:08:00.019Z"
+  },
+  {
+    "id": 1793283151111,
+    "name": "Krishna",
+    "email": "kri12@gmail.com",
+    "password_hash": "$2b$10$P0EgWWIqi39alVLr3JeSfuVwXHo4IMePRSh9C7AZIf9v/W/evk31a",
+    "created_at": "2026-10-29T14:12:31.111Z"
+  },
+  {
+    "id": 1793286503458,
+    "name": "Tester",
+    "email": "tester_1793286503343@gmail.com",
+    "password_hash": "$2b$10$20apnG08.Lrf.ltasWA0PepCD0MCo8sWgZAvJ5JcB.uYIq5xcJbnu",
+    "created_at": "2026-10-29T15:08:23.458Z"
+  },
+  {
+    "id": 1793287581028,
+    "name": "Tester",
+    "email": "tester_verify@gmail.com",
+    "password_hash": "$2b$10$Tr2I1E5mPBfl9yB6w9iXHOom25njAiZA7.SwJ.OUwxszemaoIEw8W",
+    "created_at": "2026-10-29T15:26:21.028Z"
+  },
+  {
+    "id": 1793288386706,
+    "name": "Tester",
+    "email": "tester_verify2@gmail.com",
+    "password_hash": "$2b$10$GzI7BmfTk5.18.7xQuQyTuwhpxuOEcWa9ayum5k9/.6Pjt7ciDc2a",
+    "created_at": "2026-10-29T15:39:46.706Z"
+  },
+  {
+    "id": 1793288690353,
+    "name": "Tester",
+    "email": "tester_verify3@gmail.com",
+    "password_hash": "$2b$10$uFPRoZQiB0ZPv3quJ4Stx.NQgnn2YN3P8c9Tif2ttL2Undz4CJsK2",
+    "created_at": "2026-10-29T15:44:50.353Z"
   }
 ]

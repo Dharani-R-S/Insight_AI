@@ -39,6 +39,7 @@ export default function AutoDashboard({
   onClose,
 }) {
   const [dashboards, setDashboards] = useState([]);
+  const [kpis, setKpis] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exportError, setExportError] = useState(null);
@@ -82,6 +83,7 @@ export default function AutoDashboard({
       const data = await res.json();
       if (res.ok && data.charts && data.charts.length > 0) {
         setDashboards(data.charts);
+        if (data.kpis) setKpis(data.kpis);
       } else {
         setError(data.error || 'Failed to generate dashboard');
       }
@@ -412,7 +414,32 @@ export default function AutoDashboard({
             </p>
           </div>
         ) : (
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="p-6 space-y-6">
+            {kpis && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <div className="card p-4 bg-[var(--color-bg-card)] border-[var(--color-border)] shadow-xs">
+                  <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    {kpis.primary?.label || 'Primary Metric'}
+                  </span>
+                  <div className="text-2xl font-extrabold text-[var(--color-text-primary)] mt-1">
+                    {kpis.primary?.value}
+                  </div>
+                  <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{kpis.primary?.desc}</p>
+                </div>
+                {(kpis.secondary || []).map((sec, idx) => (
+                  <div key={idx} className="card p-4 bg-[var(--color-bg-card)] border-[var(--color-border)] shadow-xs">
+                    <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                      {sec.label}
+                    </span>
+                    <div className="text-xl font-bold text-[var(--color-text-primary)] mt-1">
+                      {sec.value}
+                    </div>
+                    <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{sec.desc}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {dashboards.map((chart, index) => (
               <div
                 key={index}
@@ -484,6 +511,7 @@ export default function AutoDashboard({
                 )}
               </div>
             ))}
+            </div>
           </div>
         )}
       </div>
