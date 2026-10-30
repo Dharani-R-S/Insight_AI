@@ -397,6 +397,8 @@ export default function App() {
             onNavigate={setActivePage}
             onCreateVisualization={handleCreateVisualization}
             onOpenSavedVisualization={handleOpenSavedVisualization}
+            onOpenCleanModal={() => setIsCleanModalOpen(true)}
+            onRevertOriginal={handleRevertOriginal}
             authFetch={authFetch}
           />
         );
